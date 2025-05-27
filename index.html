@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bitcoin PSBT Builder</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: auto; padding: 1rem; }
+    textarea, input, button { width: 100%; margin-top: 0.5rem; }
+    section { margin-bottom: 2rem; }
+    .psbt-upload { margin-bottom: 1rem; }
+    pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Bitcoin PSBT Builder (Testnet)</h1>
+
+  <section>
+    <h2>1. Create PSBT</h2>
+    <label>UTXOs (JSON array)</label>
+    <textarea id="utxos" rows="5" placeholder='[{"txid":"...","vout":0,"value":10000,"scriptPubKey":"..."}]'></textarea>
+
+    <label>Outputs (JSON array)</label>
+    <textarea id="outputs" rows="3" placeholder='[{"address":"...","value":9000}]'></textarea>
+
+    <button id="createPsbt">Create & Download PSBT</button>
+  </section>
+
+  <section>
+    <h2>2. Upload Signed PSBTs</h2>
+    <input type="file" id="psbtFiles" multiple class="psbt-upload"/>
+    <button id="combinePsbt">Combine & Finalize</button>
+    <pre id="combinedResult"></pre>
+  </section>
+
+  <section>
+    <h2>3. Broadcast Transaction</h2>
+    <button id="broadcastTx">Broadcast via mempool.space</button>
+    <pre id="broadcastResult"></pre>
+  </section>
+
+  <script type="module">
+    import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
+    // const network = bitcoin.networks.testnet;
+    const network = bitcoin.networks.bitcoin;
+
+    let finalPsbt = null;
+
+    function hexToBytes(hex) {
+      if (!hex || typeof hex !== 'string') return new Uint8Array();
+      if (hex.length % 2 !== 0) throw new Error('Invalid hex string');
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+      }
+      return bytes;
+    }
+
+    function hexToBuffer(hex) {
+      return Uint8Array.from(hexToBytes(hex, 'hex'));
+    }
+
+    function createPsbtFromInputs(utxos, outputs) {
+      const psbt = new bitcoin.Psbt({ network });
+
+      for (const utxo of utxos) {
+        psbt.addInput({
+          hash: utxo.txid,
+          index: utxo.vout,
+          witnessUtxo: {
+            script: hexToBytes(utxo.scriptPubKey),
+            value: BigInt(utxo.value),
+          },
+          sequence: 0xfffffffd // Enable RBF by setting sequence < 0xffffffff
+        });
+      }
+
+      for (const out of outputs) {
+        psbt.addOutput({
+          address: out.address,
+          value: BigInt(out.value)
+        });
+      }
+
+      return psbt;
+    }
+
+    function downloadPsbt(psbt) {
+      const blob = new Blob([psbt.toBuffer()], { type: 'application/octet-stream' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'unsigned.psbt';
+      link.click();
+    }
+
+    document.getElementById('createPsbt').onclick = () => {
+      try {
+        const utxos = JSON.parse(document.getElementById('utxos').value);
+        const outputs = JSON.parse(document.getElementById('outputs').value);
+        const psbt = createPsbtFromInputs(utxos, outputs);
+        downloadPsbt(psbt);
+      } catch (e) {
+        alert("Invalid input JSON");
+      }
+    };
+
+    document.getElementById('combinePsbt').onclick = async () => {
+      const files = document.getElementById('psbtFiles').files;
+      if (!files.length) return alert("Please upload PSBT files");
+
+      const psbtArray = [];
+
+      for (const file of files) {
+        const buffer = await file.arrayBuffer();
+        const psbt = bitcoin.Psbt.fromBuffer(new Uint8Array(buffer), { network });
+        psbtArray.push(psbt);
+      }
+
+      try {
+        const combined = psbtArray[0];
+        for (let i = 1; i < psbtArray.length; i++) {
+          combined.combine(psbtArray[i]);
+        }
+
+        combined.finalizeAllInputs();
+        const txHex = combined.extractTransaction().toHex();
+        finalPsbt = txHex;
+        document.getElementById('combinedResult').innerText = txHex;
+      } catch (e) {
+        alert("Error combining or finalizing PSBTs: " + e.message);
+      }
+    };
+
+    document.getElementById('broadcastTx').onclick = async () => {
+      if (!finalPsbt) return alert("No finalized transaction to broadcast");
+
+      try {
+        const response = await fetch('https://mempool.space/testnet/api/tx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: finalPsbt
+        });
+
+        const txid = await response.text();
+        document.getElementById('broadcastResult').innerText = "Broadcasted TXID:\n" + txid;
+      } catch (err) {
+        alert("Broadcast failed: " + err.message);
+      }
+    };
+  </script>
+</body>
+</html>

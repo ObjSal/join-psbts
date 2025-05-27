@@ -173,12 +173,19 @@
       div.style.marginBottom = '1rem';
 
       div.innerHTML = `
+        <!-- Row 1 : txid + delete -->
         <div class="row">
           <input class="grow" placeholder="txid" value="${txid}">
+          <button type="button" class="remove">✕</button>
+        </div>
+
+        <!-- Row 2 : vout + value -->
+        <div class="row" style="margin-top:0.4rem;">
           <input placeholder="vout"  value="${vout}"  style="width:80px;">
           <input placeholder="value (sats)" value="${value}" style="width:110px;">
-          <button type="button" class="remove" onclick="this.closest('[data-utxo]').remove(); updateFeeCalc();">✕</button>
         </div>
+
+        <!-- scriptPubKey + decoded label -->
         <div class="row" style="margin-top:0.4rem;">
           <input class="grow script-input" placeholder="scriptPubKey (hex)" value="${scriptPubKey}">
         </div>
@@ -189,21 +196,26 @@
 
       document.getElementById('utxoContainer').appendChild(div);
 
-      // live decoding
+      // delete button handler
+      div.querySelector('.remove').addEventListener('click', () => {
+        div.remove();
+        updateFeeCalc();        // keep fee label correct
+      });
+
+      // live script validation (unchanged)
       const scriptInput = div.querySelector('.script-input');
       const labelSpan   = div.querySelector('.script-label span');
-
       const updateLabel = () => {
         const net  = getSelectedNetwork();
         const addr = decodeAddressFromScript(scriptInput.value.trim(), net);
         labelSpan.textContent = addr ? addr : 'Invalid scriptPubKey';
         colourField(scriptInput, !!addr);
+        updateFeeCalc();        // fee recalculates when value box edited
       };
       scriptInput.addEventListener('input', updateLabel);
       updateLabel();
-      updateFeeCalc();   // keep fee in sync
-
     }
+
 
 
     function addOutput(_, address = '', value = '') {

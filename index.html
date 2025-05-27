@@ -386,7 +386,6 @@
           const vsize = estimateVirtualSize(tmp);
           fee         = Math.ceil(feeRate * vsize);
           psbt        = createPsbtFromInputs(utxos, outputs, fee, changeAddr);
-          feeCalc.textContent = '';           // hidden anyway
         } else {
           // fee = inputs – outputs, no change output
           const totalIn  = utxos.reduce((s,u)=>s+u.value, 0);

@@ -177,7 +177,7 @@
           <input class="grow" placeholder="txid" value="${txid}">
           <input placeholder="vout"  value="${vout}"  style="width:80px;">
           <input placeholder="value (sats)" value="${value}" style="width:110px;">
-          <button type="button" class="remove" onclick="this.closest('[data-utxo]').remove()">✕</button>
+          <button type="button" class="remove" onclick="this.closest('[data-utxo]').remove(); updateFeeCalc();">✕</button>
         </div>
         <div class="row" style="margin-top:0.4rem;">
           <input class="grow script-input" placeholder="scriptPubKey (hex)" value="${scriptPubKey}">
@@ -201,6 +201,8 @@
       };
       scriptInput.addEventListener('input', updateLabel);
       updateLabel();
+      updateFeeCalc();   // keep fee in sync
+
     }
 
 
@@ -213,7 +215,7 @@
         <div class="row">
           <input class="grow output-address" placeholder="address" value="${address}">
           <input placeholder="value (sats)" value="${value}" style="width:110px;">
-          <button type="button" class="remove" onclick="this.closest('[data-output]').remove()">✕</button>
+          <button type="button" class="remove" onclick="this.closest('[data-output]').remove(); updateFeeCalc();">✕</button>
         </div>
       `;
 
@@ -231,6 +233,8 @@
       });
 
       // validate();
+      updateFeeCalc();   // keep fee in sync
+
     }
 
     function colourField(el, isValid) {
@@ -494,6 +498,49 @@
       handle: null,
       ghostClass: 'sortable-ghost'
     });
+    
+    function updateFeeCalc() {
+      const useChange  = includeChange.checked;
+      const net        = getSelectedNetwork();
+      const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
+
+      // gather current inputs / outputs -----------------------
+      const utxos = Array.from(document.querySelectorAll('[data-utxo]')).map(r => {
+        const [txidI, voutI, valI, scriptI] = r.querySelectorAll('input');
+        return { txid:txidI.value, vout:+voutI.value, value:+valI.value, scriptPubKey:scriptI.value };
+      });
+      const outs  = Array.from(document.querySelectorAll('[data-output]')).map(r => {
+        const [addrI, valI] = r.querySelectorAll('input');
+        return { address:addrI.value, value:+valI.value };
+      });
+
+      // -------------------------------------------------------
+      let feeText = '';
+      if (useChange) {
+        if (!feeRateSat) {
+          feeText = '(enter fee‑rate to estimate fee)';
+        } else {
+          // build temp PSBT (fee=0) to get vbytes
+          try {
+            const changeAddr = document.getElementById('changeAddress').value.trim();
+            const tmpPsbt    = createPsbtFromInputs(utxos, outs, 0, changeAddr);
+            const vbytes     = estimateVirtualSize(tmpPsbt);
+            const estFee     = Math.ceil(feeRateSat * vbytes);
+            feeText          = `Estimated fee: ${estFee} sats (${vbytes} vB)`;
+          } catch { feeText = '(unable to estimate – check values)'; }
+        }
+      } else {
+        const totalIn  = utxos.reduce((s,u)=>s+u.value, 0);
+        const totalOut = outs .reduce((s,o)=>s+o.value, 0);
+        const fee      = totalIn - totalOut;
+        feeText        = fee >= 0 ? `Transaction fee: ${fee} sats`
+                                  : 'Outputs exceed inputs!';
+      }
+
+      feeCalc.textContent = feeText;
+      feeCalc.style.display = feeText ? '' : 'none';
+    }
+    window.updateFeeCalc = updateFeeCalc;   // make it global for inline handlers
 
     function toggleChangeMode() {
       const on  = includeChange.checked;
@@ -501,6 +548,7 @@
       changeAddrGroup.style.display = on ? '' : 'none';
       feeCalc.style.display         = on ? 'none' : '';
       if (on) feeCalc.textContent   = '';          // clear old text
+      updateFeeCalc();
     }
     const includeChange   = document.getElementById('includeChange');
     const feeRateGroup    = document.getElementById('feeRateGroup');
@@ -508,6 +556,18 @@
     const feeCalc         = document.getElementById('feeCalc');
     includeChange.addEventListener('change', toggleChangeMode);
     toggleChangeMode();          // run once at load
+  
+    document.getElementById('utxoContainer')
+        .addEventListener('input', updateFeeCalc);
+    document.getElementById('outputContainer')
+            .addEventListener('input', updateFeeCalc);
+    document.getElementById('feeRate')
+        .addEventListener('input', updateFeeCalc);
+    document.getElementById('changeAddress')
+        .addEventListener('input', updateFeeCalc);
+
+
+
 
 
     addInput();

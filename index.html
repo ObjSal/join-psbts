@@ -6,10 +6,48 @@
   <style>
     body { font-family: sans-serif; max-width: 800px; margin: auto; padding: 1rem; }
     textarea, input, button { width: 100%; margin-top: 0.5rem; }
+    /* NEW override – insert right below the rule above */
+    input[type="checkbox"] {
+      width:auto;          /* let it size naturally */
+      margin-top:0;        /* align with text baseline */
+      vertical-align:middle;
+    }
     section { margin-bottom: 2rem; }
     .psbt-upload { margin-bottom: 1rem; }
     pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+    input {
+      padding: 0.3rem;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 0.3rem;
+    }
+    .sortable-ghost {
+      opacity: 0.4;
+      background: #ddd;
+    }
+    input:invalid {
+      border-color: red;
+    }
+    input {
+      border: 1px solid #ccc;
+      transition: border-color 0.2s;
+    }
+    .row        { display:flex; gap:0.5rem; width:100%; }
+    .row .grow  { flex:1; }          /* stretches to fill */
+    button.remove { width:50px; flex:0 0 50px; }  /* fixed‑width delete */
+    /* space below the output button without affecting checkbox alignment */
+    #addOutputButton { margin-bottom: 0.8rem; }
+    .checkbox-row {
+      display:flex;
+      align-items:center;
+      gap:0.4rem;
+      margin-top:0.8rem;     /* breathing space */
+    }
+
+
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 </head>
 <body>
   <h1>Bitcoin PSBT Builder</h1>
@@ -25,7 +63,7 @@
     <div>
       <h3>Inputs (UTXOs)</h3>
       <div id="utxoContainer"></div>
-      <button type="button" id="addUtxoButton">+ Add Input</button>
+      <button type="button" id="addInputButton">+ Add Input</button>
     </div>
 
     <div>
@@ -34,11 +72,26 @@
       <button type="button" id="addOutputButton">+ Add Output</button>
     </div>
 
-    <label>Fee Rate (sat/vB)</label>
-    <input type="number" id="feeRate" placeholder="e.g. 10"/>
+    <div class="checkbox-row">
+      <input type="checkbox" id="includeChange" checked>
+      <label for="includeChange" style="margin:0;">Add change output</label>
+    </div>
 
-    <label>Change Address (must match network)</label>
-    <input type="text" id="changeAddress" placeholder="tb1q..."/>
+
+
+    <div id="feeRateGroup">
+      <label>Fee Rate (sat/vB)</label>
+      <input type="number" id="feeRate" placeholder="e.g. 10">
+    </div>
+
+    <!-- fee label for no‑change mode -->
+    <div id="feeCalc" style="margin-top:0.5rem;color:#555;display:none;"></div>
+
+    <!-- keep existing Change Address block -->
+    <div id="changeAddrGroup">
+      <label>Change Address (must match network)</label>
+      <input type="text" id="changeAddress" placeholder="tb1q...">
+    </div>
 
     <button id="createPsbt">Create & Download PSBT</button>
   </section>
@@ -79,26 +132,130 @@
       };
     }
 
-    function addUtxo(event = null, txid = '', vout = '', value = '', scriptPubKey = '') {
-      const div = document.createElement('div');
-      div.innerHTML = `
-        <input placeholder="txid" value="${txid}" style="width: 40%">
-        <input placeholder="vout" value="${vout}" style="width: 10%">
-        <input placeholder="value (sats)" value="${value}" style="width: 20%">
-        <input placeholder="scriptPubKey (hex)" value="${scriptPubKey}" style="width: 25%">
-        <button type="button" onclick="this.parentElement.remove()">✕</button>
-      `;
-      document.getElementById('utxoContainer').appendChild(div);
+    function validateBitcoinAddress(address, network) {
+      try {
+        // Base58 (P2PKH or P2SH)
+        const decoded = bitcoin.address.fromBase58Check(address);
+        if (
+          (decoded.version === network.pubKeyHash || decoded.version === network.scriptHash)
+        ) {
+          return true;
+        }
+      } catch (e) {}
+
+      try {
+        const { prefix, version } = bitcoin.address.fromBech32(address);
+        if (
+          prefix === network.bech32 &&
+          (version === 0 || version === 1)
+        ) {
+          return true;
+        }
+      } catch (e) {}
+
+      return false;
     }
 
-    function addOutput(event = null, address = '', value = '') {
+    function validateScriptPubKey(hex, network) {
+      try {
+        const script = hexToBytes(hex);              // ← your helper
+        const addr   = bitcoin.address.fromOutputScript(script, network);
+        return validateBitcoinAddress(addr, network); // ← the function you kept
+      } catch (_) {
+        return false; // not a recognised standard script
+      }
+    }
+
+
+    function addInput(_, txid = '', vout = '', value = '', scriptPubKey = '') {
       const div = document.createElement('div');
+      div.setAttribute('data-utxo', '');
+      div.style.marginBottom = '1rem';
+
       div.innerHTML = `
-        <input placeholder="address" value="${address}" style="width: 70%">
-        <input placeholder="value (sats)" value="${value}" style="width: 25%">
-        <button type="button" onclick="this.parentElement.remove()">✕</button>
+        <div class="row">
+          <input class="grow" placeholder="txid" value="${txid}">
+          <input placeholder="vout"  value="${vout}"  style="width:80px;">
+          <input placeholder="value (sats)" value="${value}" style="width:110px;">
+          <button type="button" class="remove" onclick="this.closest('[data-utxo]').remove()">✕</button>
+        </div>
+        <div class="row" style="margin-top:0.4rem;">
+          <input class="grow script-input" placeholder="scriptPubKey (hex)" value="${scriptPubKey}">
+        </div>
+        <div class="script-label" style="font-size:0.85rem;color:#555;margin-top:0.2rem;">
+          Address: <span>-</span>
+        </div>
       `;
+
+      document.getElementById('utxoContainer').appendChild(div);
+
+      // live decoding
+      const scriptInput = div.querySelector('.script-input');
+      const labelSpan   = div.querySelector('.script-label span');
+
+      const updateLabel = () => {
+        const net  = getSelectedNetwork();
+        const addr = decodeAddressFromScript(scriptInput.value.trim(), net);
+        labelSpan.textContent = addr ? addr : 'Invalid scriptPubKey';
+        colourField(scriptInput, !!addr);
+      };
+      scriptInput.addEventListener('input', updateLabel);
+      updateLabel();
+    }
+
+
+    function addOutput(_, address = '', value = '') {
+      const div = document.createElement('div');
+      div.setAttribute('data-output', '');
+      div.style.marginBottom = '1rem';
+
+      div.innerHTML = `
+        <div class="row">
+          <input class="grow output-address" placeholder="address" value="${address}">
+          <input placeholder="value (sats)" value="${value}" style="width:110px;">
+          <button type="button" class="remove" onclick="this.closest('[data-output]').remove()">✕</button>
+        </div>
+      `;
+
       document.getElementById('outputContainer').appendChild(div);
+
+      const addrInput = div.querySelector('.output-address');
+      // const validate  = () => {
+      //   const net = getSelectedNetwork();
+      //   colourField(addrInput, isValid);
+      // };
+      addrInput.addEventListener('input', () => {
+        const net     = getSelectedNetwork();
+        const isValid = validateBitcoinAddress(addrInput.value.trim(), net);
+        colourField(addrInput, isValid);      // << no undefined variable
+      });
+
+      // validate();
+    }
+
+    function colourField(el, isValid) {
+      const empty = el.value.trim() === '';
+      el.style.borderColor = empty ? '#ccc'          // neutral for empty
+                                  : (isValid ? 'green' : 'red');
+    }
+
+
+    // returns address string, or null if script is unknown / wrong network
+    function decodeAddressFromScript(hex, network) {
+      try {
+        const script  = hexToBytes(hex);
+        return bitcoin.address.fromOutputScript(script, network);
+      } catch {
+        return null;
+      }
+    }
+
+    // re‑validate all scriptPubKey fields when the user changes network
+    function refreshAllScriptLabels() {
+      document.querySelectorAll('.script-input').forEach(input =>
+        input.dispatchEvent(new Event('input'))
+      );
+      validateChangeAddr();      // <‑‑ add this line
     }
 
     function estimateVirtualSize(psbt) {
@@ -127,43 +284,56 @@
 
     function createPsbtFromInputs(utxos, outputs, fee, changeAddress) {
       const network = getSelectedNetwork();
-      const psbt = new bitcoin.Psbt({ network });
+      const psbt    = new bitcoin.Psbt({ network });
 
+      // ---------------- add inputs ----------------
       let totalInput = 0;
-      for (const utxo of utxos) {
+      for (const u of utxos) {
         psbt.addInput({
-          hash: utxo.txid,
-          index: utxo.vout,
-          sequence: 0xfffffffd, // RBF-enabled input
+          hash:      u.txid,
+          index:     u.vout,
+          sequence:  0xfffffffd,               // RBF
           witnessUtxo: {
-            script: hexToBytes(utxo.scriptPubKey),
-            value: BigInt(utxo.value),
-          }
+            script: hexToBytes(u.scriptPubKey),
+            value:  BigInt(u.value),
+          },
         });
-        totalInput += utxo.value;
+        totalInput += u.value;
       }
 
+      // ---------------- add outputs ----------------
       let totalOutput = 0;
-      for (const out of outputs) {
+      for (const o of outputs) {
         psbt.addOutput({
-          address: out.address,
-          value: BigInt(out.value),
+          address: o.address,
+          value:   BigInt(o.value),
         });
-        totalOutput += out.value;
+        totalOutput += o.value;
       }
 
-      const changeValue = totalInput - totalOutput - fee;
-      if (changeValue < 0) throw new Error("Outputs + fee exceed total input!");
+      // ---------------- change logic ----------------
+      const wantsChange = changeAddress && changeAddress.trim() !== '';
 
-      if (changeValue > 0) {
-        psbt.addOutput({
-          address: changeAddress,
-          value: BigInt(changeValue)
-        });
+      if (wantsChange) {
+        // unchanged
+        const changeValue = totalInput - totalOutput - fee;
+        if (changeValue < 0)
+          throw new Error('Outputs + fee exceed total input!');
+        if (changeValue > 0) {
+          psbt.addOutput({ address: changeAddress, value: BigInt(changeValue) });
+        }
+      } else {
+        // no change output; fee = totalInput − totalOutput
+        const delta = totalInput - totalOutput;
+        if (delta < 0)
+          throw new Error('Outputs exceed total input (no change addr).');
+        // delta > 0 is allowed and becomes the tx fee
       }
+
 
       return psbt;
     }
+
 
     function downloadPsbt(psbt) {
       const blob = new Blob([psbt.toBuffer()], { type: 'application/octet-stream' });
@@ -184,7 +354,6 @@
             scriptPubKey: scriptInput.value.trim(),
           };
         });
-
         const outputs = Array.from(document.getElementById('outputContainer').children).map(row => {
           const [addressInput, valueInput] = row.querySelectorAll('input');
           return {
@@ -193,24 +362,43 @@
           };
         });
 
-        const feeRate = parseInt(document.getElementById('feeRate').value);
-        const changeAddress = document.getElementById('changeAddress').value.trim();
+        const useChange   = includeChange.checked;
+        const feeRate     = parseFloat(document.getElementById('feeRate').value);
+        const changeAddr  = document.getElementById('changeAddress').value.trim();
+        const net         = getSelectedNetwork();
 
-        if (!feeRate || feeRate <= 0) return alert("Enter a valid transaction fee rate.");
-        if (!changeAddress) return alert("Enter a change address.");
+        // Basic validations ----------------------------------
+        if (useChange) {
+          if (!feeRate || feeRate <= 0)       return alert('Enter a fee‑rate.');
+          if (!validateBitcoinAddress(changeAddr, net))
+            return alert('Invalid change address.');
+        }
 
-        const psbt = createPsbtFromInputs(utxos, outputs, 0, changeAddress); // Use 0 fee to build
+        // Build PSBT -----------------------------------------
+        let psbt, fee;
+        if (useChange) {
+          // size‑based fee
+          const tmp   = createPsbtFromInputs(utxos, outputs, 0, changeAddr);
+          const vsize = estimateVirtualSize(tmp);
+          fee         = Math.ceil(feeRate * vsize);
+          psbt        = createPsbtFromInputs(utxos, outputs, fee, changeAddr);
+          feeCalc.textContent = '';           // hidden anyway
+        } else {
+          // fee = inputs – outputs, no change output
+          const totalIn  = utxos.reduce((s,u)=>s+u.value, 0);
+          const totalOut = outputs.reduce((s,o)=>s+o.value, 0);
+          fee            = totalIn - totalOut;
+          if (fee < 0) return alert('Outputs exceed inputs!');
+          psbt           = createPsbtFromInputs(utxos, outputs, 0, ''); // no change addr
+          feeCalc.textContent = `Transaction fee: ${fee} sats`;
+        }
 
-        const vbytes = estimateVirtualSize(psbt);
-        const fee = Math.ceil(feeRate * vbytes);
-
-        // Now rebuild PSBT with correct fee and change
-        const finalPsbt = createPsbtFromInputs(utxos, outputs, fee, changeAddress);
-        downloadPsbt(finalPsbt);
+        downloadPsbt(psbt);
       } catch (e) {
-        alert("Error creating PSBT: " + e.message);
+        alert('Error creating PSBT: ' + e.message);
       }
     };
+
 
     document.getElementById('combinePsbt').onclick = async () => {
       const files = document.getElementById('psbtFiles').files;
@@ -275,12 +463,54 @@
       link.click();
     };
 
-    const addUtxoButton = document.getElementById('addUtxoButton');
-    addUtxoButton.addEventListener('click', addUtxo);
+    const addInputButton = document.getElementById('addInputButton');
+    addInputButton.addEventListener('click', addInput);
     const addOutputButton = document.getElementById('addOutputButton');
     addOutputButton.addEventListener('click', addOutput);
 
-    addUtxo();
+    // live‑validate change address like output addresses
+    const changeAddrInput = document.getElementById('changeAddress');
+
+    function validateChangeAddr() {
+      const net  = getSelectedNetwork();
+      const ok   = validateBitcoinAddress(changeAddrInput.value.trim(), net);
+      colourField(changeAddrInput, ok);
+    }
+
+    changeAddrInput.addEventListener('input', validateChangeAddr);
+    validateChangeAddr();        // run once at load
+
+
+    document.getElementById('network').addEventListener('change', refreshAllScriptLabels);
+
+    new Sortable(document.getElementById('utxoContainer'), {
+      animation: 150,
+      handle: null, // you can set to a CSS class if you want a drag handle
+      ghostClass: 'sortable-ghost'
+    });
+
+    new Sortable(document.getElementById('outputContainer'), {
+      animation: 150,
+      handle: null,
+      ghostClass: 'sortable-ghost'
+    });
+
+    function toggleChangeMode() {
+      const on  = includeChange.checked;
+      feeRateGroup.style.display    = on ? '' : 'none';
+      changeAddrGroup.style.display = on ? '' : 'none';
+      feeCalc.style.display         = on ? 'none' : '';
+      if (on) feeCalc.textContent   = '';          // clear old text
+    }
+    const includeChange   = document.getElementById('includeChange');
+    const feeRateGroup    = document.getElementById('feeRateGroup');
+    const changeAddrGroup = document.getElementById('changeAddrGroup');
+    const feeCalc         = document.getElementById('feeCalc');
+    includeChange.addEventListener('change', toggleChangeMode);
+    toggleChangeMode();          // run once at load
+
+
+    addInput();
     addOutput();
   </script>
 </body>

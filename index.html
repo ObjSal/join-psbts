@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Bitcoin PSBT Builder</title>
+  <meta charset="UTF-8">
+  <title>Bitcoin PSBT Builder (Testnet)</title>
   <style>
     body { font-family: sans-serif; max-width: 800px; margin: auto; padding: 1rem; }
     textarea, input, button { width: 100%; margin-top: 0.5rem; }
@@ -13,15 +12,27 @@
   </style>
 </head>
 <body>
-  <h1>Bitcoin PSBT Builder (Testnet)</h1>
-
+  <h1>Bitcoin PSBT Builder</h1>
+  <label for="network">Select Network:</label>
+  <select id="network">
+    <option value="mainnet">Mainnet</option>
+    <option value="testnet">Testnet4</option>
+    <option value="regtest">Regtest</option>
+  </select>
   <section>
     <h2>1. Create PSBT</h2>
-    <label>UTXOs (JSON array)</label>
-    <textarea id="utxos" rows="5" placeholder='[{"txid":"...","vout":0,"value":10000,"scriptPubKey":"..."}]'></textarea>
 
-    <label>Outputs (JSON array)</label>
-    <textarea id="outputs" rows="3" placeholder='[{"address":"...","value":9000}]'></textarea>
+    <label>UTXOs (JSON array)</label>
+    <textarea id="utxos" rows="5" placeholder='[{"txid":"...","vout":0,"value":10000,"scriptPubKey":"0014..."}]'></textarea>
+
+    <label>Recipient Outputs (JSON array)</label>
+    <textarea id="outputs" rows="3" placeholder='[{"address":"tb1q...","value":9000}]'></textarea>
+
+    <label>Fee Rate (sat/vB)</label>
+    <input type="number" id="feeRate" placeholder="e.g. 10"/>
+
+    <label>Change Address (must match network)</label>
+    <input type="text" id="changeAddress" placeholder="tb1q..."/>
 
     <button id="createPsbt">Create & Download PSBT</button>
   </section>
@@ -35,16 +46,47 @@
 
   <section>
     <h2>3. Broadcast Transaction</h2>
+    <button id="downloadFinalPsbt">Download Final PSBT</button>
     <button id="broadcastTx">Broadcast via mempool.space</button>
     <pre id="broadcastResult"></pre>
   </section>
 
   <script type="module">
     import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
-    // const network = bitcoin.networks.testnet;
-    const network = bitcoin.networks.bitcoin;
-
     let finalPsbt = null;
+    let finalTxHex = null;
+
+    function getSelectedNetwork() {
+      const net = document.getElementById('network').value;
+      if (net === 'mainnet') return bitcoin.networks.bitcoin;
+      if (net === 'testnet') return bitcoin.networks.testnet;
+      if (net === 'regtest') return {
+        messagePrefix: '\x18Bitcoin Signed Message:\n',
+        bech32: 'bcrt',
+        bip32: {
+          public: 0x043587cf,
+          private: 0x04358394,
+        },
+        pubKeyHash: 0x6f,
+        scriptHash: 0xc4,
+        wif: 0xef,
+      };
+    }
+
+
+    function estimateVirtualSize(psbt) {
+      // Rough vsize estimate: base size + witness overhead.
+      // This assumes SegWit P2WPKH inputs and standard outputs.
+      const inputCount = psbt.data.inputs.length;
+      const outputCount = psbt.data.outputs.length;
+
+      const baseSize = 10 + inputCount * 41 + outputCount * 34;
+      const witnessSize = inputCount * 107; // Approx for P2WPKH
+      const totalSize = baseSize + witnessSize;
+
+      return Math.ceil((3 * baseSize + witnessSize) / 4); // vsize formula
+    }
+
 
     function hexToBytes(hex) {
       if (!hex || typeof hex !== 'string') return new Uint8Array();
@@ -56,29 +98,40 @@
       return bytes;
     }
 
-    function hexToBuffer(hex) {
-      return Uint8Array.from(hexToBytes(hex, 'hex'));
-    }
-
-    function createPsbtFromInputs(utxos, outputs) {
+    function createPsbtFromInputs(utxos, outputs, fee, changeAddress) {
+      const network = getSelectedNetwork();
       const psbt = new bitcoin.Psbt({ network });
 
+      let totalInput = 0;
       for (const utxo of utxos) {
         psbt.addInput({
           hash: utxo.txid,
           index: utxo.vout,
+          sequence: 0xfffffffd, // RBF-enabled input
           witnessUtxo: {
             script: hexToBytes(utxo.scriptPubKey),
             value: BigInt(utxo.value),
-          },
-          sequence: 0xfffffffd // Enable RBF by setting sequence < 0xffffffff
+          }
         });
+        totalInput += utxo.value;
       }
 
+      let totalOutput = 0;
       for (const out of outputs) {
         psbt.addOutput({
           address: out.address,
-          value: BigInt(out.value)
+          value: BigInt(out.value),
+        });
+        totalOutput += out.value;
+      }
+
+      const changeValue = totalInput - totalOutput - fee;
+      if (changeValue < 0) throw new Error("Outputs + fee exceed total input!");
+
+      if (changeValue > 0) {
+        psbt.addOutput({
+          address: changeAddress,
+          value: BigInt(changeValue)
         });
       }
 
@@ -97,10 +150,22 @@
       try {
         const utxos = JSON.parse(document.getElementById('utxos').value);
         const outputs = JSON.parse(document.getElementById('outputs').value);
-        const psbt = createPsbtFromInputs(utxos, outputs);
-        downloadPsbt(psbt);
+        const feeRate = parseInt(document.getElementById('feeRate').value);
+        const changeAddress = document.getElementById('changeAddress').value.trim();
+
+        if (!feeRate || feeRate <= 0) return alert("Enter a valid transaction fee rate.");
+        if (!changeAddress) return alert("Enter a change address.");
+
+        const psbt = createPsbtFromInputs(utxos, outputs, 0, changeAddress); // Use 0 fee to build
+
+        const vbytes = estimateVirtualSize(psbt);
+        const fee = Math.ceil(feeRate * vbytes);
+
+        // Now rebuild PSBT with correct fee and change
+        const finalPsbt = createPsbtFromInputs(utxos, outputs, fee, changeAddress);
+        downloadPsbt(finalPsbt);
       } catch (e) {
-        alert("Invalid input JSON");
+        alert("Error creating PSBT: " + e.message);
       }
     };
 
@@ -109,7 +174,7 @@
       if (!files.length) return alert("Please upload PSBT files");
 
       const psbtArray = [];
-
+      const network = getSelectedNetwork();
       for (const file of files) {
         const buffer = await file.arrayBuffer();
         const psbt = bitcoin.Psbt.fromBuffer(new Uint8Array(buffer), { network });
@@ -123,22 +188,27 @@
         }
 
         combined.finalizeAllInputs();
-        const txHex = combined.extractTransaction().toHex();
-        finalPsbt = txHex;
-        document.getElementById('combinedResult').innerText = txHex;
+        finalPsbt = combined;
+        finalTxHex = combined.extractTransaction().toHex();
+        document.getElementById('combinedResult').innerText = finalTxHex;
       } catch (e) {
-        alert("Error combining or finalizing PSBTs: " + e.message);
+        alert("Error combining/finalizing PSBTs: " + e.message);
       }
     };
 
     document.getElementById('broadcastTx').onclick = async () => {
-      if (!finalPsbt) return alert("No finalized transaction to broadcast");
+      if (!finalTxHex) return alert("No finalized transaction available");
+
+      const network = getSelectedNetwork();
+      let broadcastUrl = 'https://mempool.space/api/tx';
+      if (network === 'testnet') broadcastUrl = 'https://mempool.space/testnet4/api/tx';
+      if (network === 'regtest') broadcastUrl = 'https://mempool.space/signet/api/tx';
 
       try {
-        const response = await fetch('https://mempool.space/testnet/api/tx', {
+        const response = await fetch(broadcastUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
-          body: finalPsbt
+          body: finalTxHex
         });
 
         const txid = await response.text();
@@ -147,6 +217,22 @@
         alert("Broadcast failed: " + err.message);
       }
     };
+
+    document.getElementById('downloadFinalPsbt').onclick = () => {
+      if (!finalPsbt || typeof finalPsbt !== 'object' || !finalPsbt.toBuffer) {
+        alert("No finalized PSBT available");
+        return;
+      }
+
+      const psbtBuffer = finalPsbt.toBuffer();
+      const blob = new Blob([psbtBuffer], { type: 'application/octet-stream' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'finalized.psbt';
+      link.click();
+    };
+
+
   </script>
 </body>
 </html>

@@ -111,7 +111,11 @@
   </section>
 
   <script type="module">
+    import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
+    window.Buffer = Buffer;
     import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
+    import * as ecc from 'https://cdn.jsdelivr.net/npm/@bitcoin-js/tiny-secp256k1-asmjs@2.2.3/+esm';
+    bitcoin.initEccLib(ecc);
     let finalPsbt = null;
     let finalTxHex = null;
 

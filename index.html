@@ -259,12 +259,24 @@
     // returns address string, or null if script is unknown / wrong network
     function decodeAddressFromScript(hex, network) {
       try {
-        const script  = hexToBytes(hex);
+        // 1. try the built‑in decoder for non‑Taproot scripts
+        const script = hexToBytes(hex);
         return bitcoin.address.fromOutputScript(script, network);
-      } catch {
-        return null;
-      }
+      } catch (e) {
+        /* fall through */}
+      
+      // 2. manual Taproot detection  (OP_1 0x20 <32‑byte‑pubkey>)
+      try {
+        const bytes = hexToBytes(hex);
+        if (bytes.length === 34 && bytes[0] === 0x51 && bytes[1] === 0x20) {
+          const pubkey = bytes.slice(2);          // 32‑byte x‑only key
+          return bitcoin.address.toBech32(pubkey, 1, network.bech32);  // bech32m
+        }
+      } catch {_/* ignore */ }
+
+      return null;   // unknown or wrong‑network script
     }
+
 
     // re‑validate all scriptPubKey fields when the user changes network
     function refreshAllScriptLabels() {

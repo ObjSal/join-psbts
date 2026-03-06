@@ -265,6 +265,9 @@
     import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
     import * as ecc from 'https://cdn.jsdelivr.net/npm/@bitcoin-js/tiny-secp256k1-asmjs@2.2.3/+esm';
     bitcoin.initEccLib(ecc);
+    import BIP32Factory from 'https://esm.sh/bip32@4.0.0?target=es2022';
+    import bs58check from 'https://esm.sh/bs58check@3.0.1?target=es2022';
+    const bip32 = BIP32Factory(ecc);
     let finalPsbt = null;
     let finalTxHex = null;
 
@@ -456,6 +459,66 @@
     }
 
 
+    // ── xpub → compressed public key derivation ──────────────────────
+
+    const XPUB_VERSIONS = new Map([
+      // Mainnet → xpub (0x0488b21e)
+      ['0488b21e', '0488b21e'],  // xpub
+      ['049d7cb2', '0488b21e'],  // ypub  (BIP49)
+      ['04b24746', '0488b21e'],  // zpub  (BIP84)
+      ['0295b43f', '0488b21e'],  // Ypub  (multi-sig)
+      ['02aa7ed3', '0488b21e'],  // Zpub  (multi-sig)
+      // Testnet → tpub (0x043587cf)
+      ['043587cf', '043587cf'],  // tpub
+      ['044a5262', '043587cf'],  // upub  (BIP49)
+      ['045f1cf6', '043587cf'],  // vpub  (BIP84)
+      ['024289ef', '043587cf'],  // Upub  (multi-sig)
+      ['02575483', '043587cf'],  // Vpub  (multi-sig)
+    ]);
+
+    const TESTNET_VERSIONS = new Set([
+      '043587cf','044a5262','045f1cf6','024289ef','02575483'
+    ]);
+
+    function normalizeExtendedKey(key) {
+      const decoded = bs58check.decode(key);
+      const versionHex = Buffer.from(decoded.slice(0, 4)).toString('hex');
+      const targetVersion = XPUB_VERSIONS.get(versionHex);
+      if (!targetVersion) throw new Error('Unrecognized extended key type');
+      const isTestnet = TESTNET_VERSIONS.has(versionHex);
+      if (versionHex === targetVersion) return { key, isTestnet };
+      const targetBytes = Buffer.from(targetVersion, 'hex');
+      const newData = new Uint8Array(decoded.length);
+      newData.set(targetBytes, 0);
+      newData.set(decoded.slice(4), 4);
+      return { key: bs58check.encode(newData), isTestnet };
+    }
+
+    function getRelativePath(fullPath, xpubDepth) {
+      const parts = fullPath.replace(/^m\//, '').split('/');
+      if (parts.length <= xpubDepth) {
+        throw new Error('Path is not deeper than the xpub level');
+      }
+      const relative = parts.slice(xpubDepth);
+      for (const p of relative) {
+        if (p.endsWith("'") || p.endsWith('h') || p.endsWith('H')) {
+          throw new Error("Cannot derive hardened children from an xpub");
+        }
+      }
+      return relative.join('/');
+    }
+
+    function derivePublicKeyFromXpub(xpubStr, fullPath) {
+      const { key: canonical, isTestnet } = normalizeExtendedKey(xpubStr);
+      const network = isTestnet ? bitcoin.networks.testnet : bitcoin.networks.bitcoin;
+      const node = bip32.fromBase58(canonical, network);
+      const rel = getRelativePath(fullPath, node.depth);
+      const child = node.derivePath(rel);
+      return Buffer.from(child.publicKey).toString('hex');
+    }
+
+
+
     function addInput(_, txid = '', vout = '', value = '', scriptPubKey = '') {
       const div = document.createElement('div');
       div.setAttribute('data-utxo', '');
@@ -490,6 +553,9 @@
             <input class="hw-path" placeholder="Derivation path (e.g. m/84'/0'/0'/0/5)" style="flex:1;">
           </div>
           <div class="row" style="margin-top:0.3rem;">
+            <input class="grow hw-xpub" placeholder="Extended public key (xpub, ypub, zpub, vpub...)" style="font-family:'Courier New',monospace;font-size:0.82rem;">
+          </div>
+          <div class="row" style="margin-top:0.3rem;">
             <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
           </div>
         </div>
@@ -510,6 +576,28 @@
         const open = hwFields.classList.toggle('open');
         toggle.textContent = open ? 'HW wallet info ▾' : 'HW wallet info ▸';
       });
+
+      // Auto-derive pubkey from xpub + path
+      const xpubInput = div.querySelector('.hw-xpub');
+      const pathInput = div.querySelector('.hw-path');
+      const pubkeyInput = div.querySelector('.hw-pubkey');
+      function tryDerivePubkey() {
+        const xpub = xpubInput.value.trim();
+        const path = pathInput.value.trim();
+        pubkeyInput.readOnly = !!xpub;
+        if (!xpub) { pubkeyInput.placeholder = 'Public key (66 hex, compressed)'; return; }
+        if (!path) { pubkeyInput.value = ''; pubkeyInput.placeholder = 'Enter derivation path to derive key'; return; }
+        try {
+          pubkeyInput.value = derivePublicKeyFromXpub(xpub, path);
+          colourField(pubkeyInput, true);
+        } catch (e) {
+          pubkeyInput.value = '';
+          pubkeyInput.placeholder = e.message;
+          colourField(pubkeyInput, false);
+        }
+      }
+      xpubInput.addEventListener('input', tryDerivePubkey);
+      pathInput.addEventListener('input', tryDerivePubkey);
 
       // live script validation (unchanged)
       const scriptInput = div.querySelector('.script-input');
@@ -564,6 +652,9 @@
             <input class="hw-path" placeholder="Derivation path (e.g. m/84'/0'/0'/0/5)" style="flex:1;">
           </div>
           <div class="row" style="margin-top:0.3rem;">
+            <input class="grow hw-xpub" placeholder="Extended public key (xpub, ypub, zpub, vpub...)" style="font-family:'Courier New',monospace;font-size:0.82rem;">
+          </div>
+          <div class="row" style="margin-top:0.3rem;">
             <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
           </div>
         </div>
@@ -582,6 +673,28 @@
         const open = hwFields.classList.toggle('open');
         toggle.textContent = open ? 'HW wallet info \u25be' : 'HW wallet info \u25b8';
       });
+
+      // Auto-derive pubkey from xpub + path
+      const xpubInput = div.querySelector('.hw-xpub');
+      const pathInput = div.querySelector('.hw-path');
+      const pubkeyInput = div.querySelector('.hw-pubkey');
+      function tryDerivePubkey() {
+        const xpub = xpubInput.value.trim();
+        const path = pathInput.value.trim();
+        pubkeyInput.readOnly = !!xpub;
+        if (!xpub) { pubkeyInput.placeholder = 'Public key (66 hex, compressed)'; return; }
+        if (!path) { pubkeyInput.value = ''; pubkeyInput.placeholder = 'Enter derivation path to derive key'; return; }
+        try {
+          pubkeyInput.value = derivePublicKeyFromXpub(xpub, path);
+          colourField(pubkeyInput, true);
+        } catch (e) {
+          pubkeyInput.value = '';
+          pubkeyInput.placeholder = e.message;
+          colourField(pubkeyInput, false);
+        }
+      }
+      xpubInput.addEventListener('input', tryDerivePubkey);
+      pathInput.addEventListener('input', tryDerivePubkey);
     }
 
 
@@ -772,7 +885,7 @@
             value: parseInt(valueInput.value),
             scriptPubKey: scriptInput.value.trim(),
             xfp: xfpInput ? xfpInput.value.trim() : '',
-            derivationPath: pathInput ? pathInput.value.trim() : '',
+            derivationPath: pathInput ? pathInput.value.trim().replace(/[hH]/g, "'") : '',
             pubkey: pubkeyInput ? pubkeyInput.value.trim() : '',
           };
         });
@@ -1035,8 +1148,6 @@
 
 
 
-    addOutput();
-
     // Test hook — expose internal functions for automated testing
     if (window.__TEST_MODE__) {
       window._fn = {
@@ -1045,6 +1156,7 @@
         getMempoolBaseUrl, fetchRawTx, fetchAllNonWitnessUtxos, fetchUtxos,
         fetchFeeRates, rawTxCache,
         colourField, addInput, addFetchedInput, addOutput, updateFeeCalc,
+        normalizeExtendedKey, getRelativePath, derivePublicKeyFromXpub,
         toggleChangeMode, refreshAllScriptLabels, downloadPsbt,
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },

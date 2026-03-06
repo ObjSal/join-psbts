@@ -919,6 +919,89 @@ def run_tests(page, base_url):
     test("PSBT buffer has content", result["bufferLength"] > 0)
 
 
+    # ========================================================
+    section("22. xpub Public Key Derivation")
+    # ========================================================
+
+    # BIP32 test vector 1 master xpub (depth 0)
+    MASTER_XPUB = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8"
+
+    # normalizeExtendedKey — xpub passthrough
+    result = page.evaluate(f"""() => {{
+        const r = window._fn.normalizeExtendedKey("{MASTER_XPUB}");
+        return {{ key: r.key, isTestnet: r.isTestnet }};
+    }}""")
+    test("normalizeExtendedKey: xpub unchanged", result["key"] == MASTER_XPUB)
+    test("normalizeExtendedKey: xpub is mainnet", result["isTestnet"] is False)
+
+    # normalizeExtendedKey — invalid key
+    result = page.evaluate("""() => {
+        try { window._fn.normalizeExtendedKey("notavalidkey"); return "no error"; }
+        catch (e) { return e.message; }
+    }""")
+    test("normalizeExtendedKey: invalid key throws", "error" not in result.lower() or "nrecognized" in result.lower() or result != "no error", f"got: {result}")
+
+    # getRelativePath — basic
+    result = page.evaluate("""() => window._fn.getRelativePath("m/84'/0'/0'/0/5", 3)""")
+    test("getRelativePath: m/84'/0'/0'/0/5 depth 3 → 0/5", result == "0/5")
+
+    # getRelativePath — depth 0
+    result = page.evaluate("""() => window._fn.getRelativePath("m/0/1", 0)""")
+    test("getRelativePath: m/0/1 depth 0 → 0/1", result == "0/1")
+
+    # getRelativePath — too shallow
+    result = page.evaluate("""() => {
+        try { window._fn.getRelativePath("m/84'/0'", 3); return "no error"; }
+        catch (e) { return e.message; }
+    }""")
+    test("getRelativePath: too shallow throws", result != "no error")
+
+    # getRelativePath — hardened child from xpub
+    result = page.evaluate("""() => {
+        try { window._fn.getRelativePath("m/84'/0'/0'/0'/5", 3); return "no error"; }
+        catch (e) { return e.message; }
+    }""")
+    test("getRelativePath: hardened child throws", "hardened" in result.lower())
+
+    # derivePublicKeyFromXpub — end-to-end with master xpub at m/0/1
+    result = page.evaluate(f"""() => {{
+        const pubkey = window._fn.derivePublicKeyFromXpub("{MASTER_XPUB}", "m/0/1");
+        return {{ pubkey, len: pubkey.length, prefix: pubkey.slice(0, 2) }};
+    }}""")
+    test("derivePublicKeyFromXpub: returns 66 hex", result["len"] == 66)
+    test("derivePublicKeyFromXpub: starts with 02 or 03", result["prefix"] in ("02", "03"))
+
+    # derivePublicKeyFromXpub — same xpub different path gives different key
+    result = page.evaluate(f"""() => {{
+        const k1 = window._fn.derivePublicKeyFromXpub("{MASTER_XPUB}", "m/0/0");
+        const k2 = window._fn.derivePublicKeyFromXpub("{MASTER_XPUB}", "m/0/1");
+        return {{ k1, k2, different: k1 !== k2 }};
+    }}""")
+    test("derivePublicKeyFromXpub: different paths → different keys", result["different"])
+
+    # DOM: xpub auto-derives pubkey
+    page.click("#addInputButton")
+    page.click("[data-utxo]:last-child .hw-toggle")
+    page.fill("[data-utxo]:last-child .hw-path", "m/0/0")
+    page.fill(f"[data-utxo]:last-child .hw-xpub", MASTER_XPUB)
+    page.dispatch_event("[data-utxo]:last-child .hw-xpub", "input")
+    pubkey_val = page.input_value("[data-utxo]:last-child .hw-pubkey")
+    test("DOM: xpub auto-populates pubkey", len(pubkey_val) == 66, f"got len={len(pubkey_val)}")
+
+    # DOM: pubkey field is readonly when xpub present
+    is_readonly = page.evaluate("() => document.querySelector('[data-utxo]:last-child .hw-pubkey').readOnly")
+    test("DOM: pubkey readonly when xpub set", is_readonly)
+
+    # DOM: clearing xpub restores manual mode
+    page.fill("[data-utxo]:last-child .hw-xpub", "")
+    page.dispatch_event("[data-utxo]:last-child .hw-xpub", "input")
+    is_readonly = page.evaluate("() => document.querySelector('[data-utxo]:last-child .hw-pubkey').readOnly")
+    test("DOM: pubkey editable when xpub cleared", not is_readonly)
+
+    # Clean up the extra input row
+    page.click("[data-utxo]:last-child .remove")
+
+
 # ============================================================
 # Main
 # ============================================================

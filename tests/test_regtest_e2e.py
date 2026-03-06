@@ -468,6 +468,542 @@ def run_tests(page, base_url, cli, server_url):
     # Clean up temp files
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    # ================================================================
+    #  PART B — Serial Signing  (A signs → passes to B → single file)
+    # ================================================================
+
+    # ========================================================
+    section("9. Fund Wallets (Serial Test)")
+    # ========================================================
+
+    SERIAL_FUND_A = "0.8"
+    SERIAL_FUND_B = "0.3"
+    SERIAL_SATS_A = 80_000_000
+    SERIAL_SATS_B = 30_000_000
+    SERIAL_SEND = 109_900_000       # 0.8 + 0.3 BTC minus 0.001 BTC fee
+
+    addr_a2 = cli.run("getnewaddress", "", "bech32", wallet="wallet_a")
+    addr_b2 = cli.run("getnewaddress", "", "bech32", wallet="wallet_b")
+    addr_recip2 = cli.run("getnewaddress", "", "bech32", wallet="wallet_recipient")
+
+    res_a2 = api_post(server_url, "/api/faucet",
+                      {"address": addr_a2, "amount": SERIAL_FUND_A})
+    test("serial: faucet funded wallet_a", res_a2.get("success") is True)
+
+    res_b2 = api_post(server_url, "/api/faucet",
+                      {"address": addr_b2, "amount": SERIAL_FUND_B})
+    test("serial: faucet funded wallet_b", res_b2.get("success") is True)
+
+    # ========================================================
+    section("10. Fetch UTXOs & Create PSBT (Serial)")
+    # ========================================================
+
+    # Reload page for a fresh state
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    # Clear default rows
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    # Fetch UTXOs for both wallets
+    page.fill("#fetchAddress", addr_a2)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+
+    page.fill("#fetchAddress", addr_b2)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-utxo]').length === 2",
+        timeout=15000)
+
+    test("serial: 2 input rows fetched",
+         len(page.query_selector_all("[data-utxo]")) == 2)
+
+    # Add output and create PSBT
+    page.uncheck("#includeChange")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{addr_recip2}", {SERIAL_SEND});
+    }}""")
+
+    # Re-register dialog handler (page was reloaded)
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+
+    all_dialogs.clear()
+    with page.expect_download(timeout=30000) as download_info:
+        page.click("#createPsbt")
+    dl2 = download_info.value
+
+    test("serial: no error on create", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+    test("serial: PSBT downloaded", dl2 is not None)
+
+    with open(dl2.path(), "rb") as f:
+        psbt_bin2 = f.read()
+    test("serial: PSBT has magic header", psbt_bin2[:5] == b"psbt\xff")
+
+    # ========================================================
+    section("11. Sign Serially (A → B)")
+    # ========================================================
+
+    psbt_b64_2 = base64.b64encode(psbt_bin2).decode("ascii")
+
+    # Step 1: wallet_a signs → partial (only its input)
+    after_a = cli.run_json("walletprocesspsbt", psbt_b64_2,
+                           "true", "DEFAULT", "true", "false",
+                           wallet="wallet_a")
+    test("serial: wallet_a signed (partial)",
+         after_a.get("complete") is False,
+         f"complete={after_a.get('complete')}")
+
+    # Step 2: wallet_b signs wallet_a's output → both sigs present
+    # Note: complete=False is expected because finalize=false was requested;
+    # the PSBT has all partial sigs but hasn't been finalized yet.
+    after_b = cli.run_json("walletprocesspsbt", after_a["psbt"],
+                           "true", "DEFAULT", "true", "false",
+                           wallet="wallet_b")
+    test("serial: wallet_b signed", len(after_b.get("psbt", "")) > 0)
+
+    # Write the single fully-signed (but not finalized) file
+    tmp_dir2 = tempfile.mkdtemp(prefix="psbt_serial_")
+    serial_path = os.path.join(tmp_dir2, "serial_signed.psbt")
+    with open(serial_path, "wb") as f:
+        f.write(base64.b64decode(after_b["psbt"]))
+    test("serial: signed file written", os.path.exists(serial_path))
+
+    # ========================================================
+    section("12. Finalize via UI (Single File)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.set_input_files("#psbtFiles", [serial_path])
+    page.click("#combinePsbt")
+    page.wait_for_timeout(3000)
+
+    test("serial: no error on finalize", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    serial_hex = (page.text_content("#combinedResult") or "").strip()
+    test("serial: finalized hex present",
+         len(serial_hex) > 0 and
+         re.match(r'^[0-9a-fA-F]+$', serial_hex) is not None,
+         f"length={len(serial_hex)}")
+
+    # ========================================================
+    section("13. Broadcast & Verify (Serial)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("serial: no error on broadcast", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    serial_bcast = page.text_content("#broadcastResult")
+    test("serial: broadcast shows TXID",
+         serial_bcast is not None and "Broadcasted TXID:" in serial_bcast,
+         f"got: {serial_bcast}")
+
+    serial_txid_match = re.search(r'[a-f0-9]{64}', serial_bcast or "")
+    test("serial: broadcast TXID valid", serial_txid_match is not None)
+    serial_txid = serial_txid_match.group(0) if serial_txid_match else ""
+
+    if not serial_txid:
+        test("SKIP: serial on-chain verification", False,
+             "broadcast failed")
+        shutil.rmtree(tmp_dir2, ignore_errors=True)
+        return
+
+    try:
+        api_post(server_url, "/api/mine", {"blocks": 1})
+    except Exception:
+        pass
+
+    decoded2 = cli.run_json("getrawtransaction", serial_txid, "true")
+    test("serial: transaction confirmed",
+         decoded2.get("confirmations", 0) >= 1,
+         f"confirmations={decoded2.get('confirmations', 0)}")
+    test("serial: 2 inputs", len(decoded2.get("vin", [])) == 2,
+         f"got {len(decoded2.get('vin', []))}")
+    test("serial: 1 output", len(decoded2.get("vout", [])) == 1,
+         f"got {len(decoded2.get('vout', []))}")
+    test("serial: output amount correct",
+         round(decoded2["vout"][0]["value"] * 1e8) == SERIAL_SEND,
+         f"expected {SERIAL_SEND}, got {round(decoded2['vout'][0]['value'] * 1e8)}")
+
+    shutil.rmtree(tmp_dir2, ignore_errors=True)
+
+    # ================================================================
+    #  PART C — Taproot (P2TR) Parallel Signing
+    # ================================================================
+
+    # ========================================================
+    section("14. Fund Taproot Wallets (Parallel)")
+    # ========================================================
+
+    TR_FUND_A = "0.6"
+    TR_FUND_B = "0.4"
+    TR_SATS_A = 60_000_000
+    TR_SATS_B = 40_000_000
+    TR_SEND = 99_900_000       # 0.6 + 0.4 BTC minus 0.001 BTC fee
+
+    addr_tr_a = cli.run("getnewaddress", "", "bech32m", wallet="wallet_a")
+    addr_tr_b = cli.run("getnewaddress", "", "bech32m", wallet="wallet_b")
+    addr_tr_recip = cli.run("getnewaddress", "", "bech32m", wallet="wallet_recipient")
+
+    test("taproot addr_a valid (bcrt1p)", addr_tr_a.startswith("bcrt1p"),
+         f"got {addr_tr_a}")
+    test("taproot addr_b valid (bcrt1p)", addr_tr_b.startswith("bcrt1p"),
+         f"got {addr_tr_b}")
+    test("taproot recipient valid (bcrt1p)", addr_tr_recip.startswith("bcrt1p"),
+         f"got {addr_tr_recip}")
+
+    res_tr_a = api_post(server_url, "/api/faucet",
+                        {"address": addr_tr_a, "amount": TR_FUND_A})
+    test("taproot: faucet funded wallet_a", res_tr_a.get("success") is True)
+
+    res_tr_b = api_post(server_url, "/api/faucet",
+                        {"address": addr_tr_b, "amount": TR_FUND_B})
+    test("taproot: faucet funded wallet_b", res_tr_b.get("success") is True)
+
+    # ========================================================
+    section("15. Fetch UTXOs via UI (Taproot)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    page.fill("#fetchAddress", addr_tr_a)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+    status_tr = page.text_content("#fetchStatus")
+    test("taproot: wallet_a UTXOs fetched", "Added 1 UTXO" in status_tr,
+         f"got: {status_tr}")
+
+    page.fill("#fetchAddress", addr_tr_b)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-utxo]').length === 2",
+        timeout=15000)
+    test("taproot: 2 input rows fetched",
+         len(page.query_selector_all("[data-utxo]")) == 2)
+
+    # Verify Taproot scriptPubKey format (OP_1 <32-byte-key> = 5120...)
+    tr_scripts = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.script-input'))
+            .map(el => el.value);
+    }""")
+    test("taproot: scriptPubKeys are P2TR (5120...)",
+         all(s.startswith("5120") and len(s) == 68 for s in tr_scripts if s),
+         f"got {tr_scripts}")
+
+    # ========================================================
+    section("16. Create PSBT via UI (Taproot)")
+    # ========================================================
+
+    page.uncheck("#includeChange")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{addr_tr_recip}", {TR_SEND});
+    }}""")
+
+    # Re-register dialog handler (page was reloaded)
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+
+    all_dialogs.clear()
+    with page.expect_download(timeout=30000) as download_info:
+        page.click("#createPsbt")
+    dl_tr = download_info.value
+
+    test("taproot: no error on create", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+    test("taproot: PSBT downloaded", dl_tr is not None)
+
+    with open(dl_tr.path(), "rb") as f:
+        psbt_tr_bin = f.read()
+    test("taproot: PSBT has magic header", psbt_tr_bin[:5] == b"psbt\xff")
+
+    # ========================================================
+    section("17. Sign PSBT with bitcoin-cli (Taproot)")
+    # ========================================================
+
+    psbt_tr_b64 = base64.b64encode(psbt_tr_bin).decode("ascii")
+
+    result_tr_a = cli.run_json("walletprocesspsbt", psbt_tr_b64,
+                                "true", "DEFAULT", "true", "false",
+                                wallet="wallet_a")
+    test("taproot: wallet_a signed", len(result_tr_a.get("psbt", "")) > 0)
+
+    result_tr_b = cli.run_json("walletprocesspsbt", psbt_tr_b64,
+                                "true", "DEFAULT", "true", "false",
+                                wallet="wallet_b")
+    test("taproot: wallet_b signed", len(result_tr_b.get("psbt", "")) > 0)
+
+    # Write signed PSBTs to temp files
+    tmp_tr = tempfile.mkdtemp(prefix="psbt_taproot_")
+    tr_a_path = os.path.join(tmp_tr, "tr_signed_a.psbt")
+    tr_b_path = os.path.join(tmp_tr, "tr_signed_b.psbt")
+    with open(tr_a_path, "wb") as f:
+        f.write(base64.b64decode(result_tr_a["psbt"]))
+    with open(tr_b_path, "wb") as f:
+        f.write(base64.b64decode(result_tr_b["psbt"]))
+    test("taproot: signed files written",
+         os.path.exists(tr_a_path) and os.path.exists(tr_b_path))
+
+    # ========================================================
+    section("18. Combine & Finalize via UI (Taproot)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.set_input_files("#psbtFiles", [tr_a_path, tr_b_path])
+    page.click("#combinePsbt")
+    page.wait_for_timeout(3000)
+
+    test("taproot: no error on combine", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    tr_hex = (page.text_content("#combinedResult") or "").strip()
+    test("taproot: finalized hex present",
+         len(tr_hex) > 0 and re.match(r'^[0-9a-fA-F]+$', tr_hex) is not None,
+         f"length={len(tr_hex)}, preview={tr_hex[:40]}...")
+
+    # ========================================================
+    section("19. Broadcast via UI (Taproot)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("taproot: no error on broadcast", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    tr_bcast = page.text_content("#broadcastResult")
+    test("taproot: broadcast shows TXID",
+         tr_bcast is not None and "Broadcasted TXID:" in tr_bcast,
+         f"got: {tr_bcast}")
+
+    tr_txid_match = re.search(r'[a-f0-9]{64}', tr_bcast or "")
+    test("taproot: broadcast TXID valid", tr_txid_match is not None)
+    tr_txid = tr_txid_match.group(0) if tr_txid_match else ""
+
+    # ========================================================
+    section("20. On-chain Verification (Taproot)")
+    # ========================================================
+
+    if not tr_txid:
+        test("SKIP: taproot on-chain verification", False,
+             "broadcast failed, cannot verify")
+        shutil.rmtree(tmp_tr, ignore_errors=True)
+    else:
+        try:
+            api_post(server_url, "/api/mine", {"blocks": 1})
+        except Exception:
+            pass
+
+        decoded_tr = cli.run_json("getrawtransaction", tr_txid, "true")
+        test("taproot: transaction confirmed",
+             decoded_tr.get("confirmations", 0) >= 1,
+             f"confirmations={decoded_tr.get('confirmations', 0)}")
+        test("taproot: 2 inputs", len(decoded_tr.get("vin", [])) == 2,
+             f"got {len(decoded_tr.get('vin', []))}")
+        test("taproot: 1 output", len(decoded_tr.get("vout", [])) == 1,
+             f"got {len(decoded_tr.get('vout', []))}")
+        test("taproot: output amount correct",
+             round(decoded_tr["vout"][0]["value"] * 1e8) == TR_SEND,
+             f"expected {TR_SEND}, got {round(decoded_tr['vout'][0]['value'] * 1e8)}")
+
+        # Verify witness uses Schnorr signature (64 bytes = key-path spend)
+        for i, vin in enumerate(decoded_tr.get("vin", [])):
+            witness = vin.get("txinwitness", [])
+            test(f"taproot: input {i} has 1 witness item (key-path)",
+                 len(witness) == 1,
+                 f"got {len(witness)} items")
+            if witness:
+                test(f"taproot: input {i} Schnorr sig (64 bytes)",
+                     len(witness[0]) == 128,  # 64 bytes = 128 hex chars
+                     f"got {len(witness[0])} hex chars")
+
+        shutil.rmtree(tmp_tr, ignore_errors=True)
+
+    # ================================================================
+    #  PART D — Taproot (P2TR) Serial Signing
+    # ================================================================
+
+    # ========================================================
+    section("21. Fund Wallets (Taproot Serial)")
+    # ========================================================
+
+    TRS_FUND_A = "0.7"
+    TRS_FUND_B = "0.2"
+    TRS_SATS_A = 70_000_000
+    TRS_SATS_B = 20_000_000
+    TRS_SEND = 89_900_000      # 0.7 + 0.2 BTC minus 0.001 BTC fee
+
+    addr_trs_a = cli.run("getnewaddress", "", "bech32m", wallet="wallet_a")
+    addr_trs_b = cli.run("getnewaddress", "", "bech32m", wallet="wallet_b")
+    addr_trs_recip = cli.run("getnewaddress", "", "bech32m", wallet="wallet_recipient")
+
+    res_trs_a = api_post(server_url, "/api/faucet",
+                         {"address": addr_trs_a, "amount": TRS_FUND_A})
+    test("taproot serial: faucet funded wallet_a",
+         res_trs_a.get("success") is True)
+
+    res_trs_b = api_post(server_url, "/api/faucet",
+                         {"address": addr_trs_b, "amount": TRS_FUND_B})
+    test("taproot serial: faucet funded wallet_b",
+         res_trs_b.get("success") is True)
+
+    # ========================================================
+    section("22. Fetch UTXOs & Create PSBT (Taproot Serial)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    page.fill("#fetchAddress", addr_trs_a)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+
+    page.fill("#fetchAddress", addr_trs_b)
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-utxo]').length === 2",
+        timeout=15000)
+    test("taproot serial: 2 input rows fetched",
+         len(page.query_selector_all("[data-utxo]")) == 2)
+
+    page.uncheck("#includeChange")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{addr_trs_recip}", {TRS_SEND});
+    }}""")
+
+    # Re-register dialog handler (page was reloaded)
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+
+    all_dialogs.clear()
+    with page.expect_download(timeout=30000) as download_info:
+        page.click("#createPsbt")
+    dl_trs = download_info.value
+
+    test("taproot serial: no error on create", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    with open(dl_trs.path(), "rb") as f:
+        psbt_trs_bin = f.read()
+    test("taproot serial: PSBT has magic header",
+         psbt_trs_bin[:5] == b"psbt\xff")
+
+    # ========================================================
+    section("23. Sign Serially A -> B (Taproot)")
+    # ========================================================
+
+    psbt_trs_b64 = base64.b64encode(psbt_trs_bin).decode("ascii")
+
+    # Step 1: wallet_a signs -> partial
+    after_trs_a = cli.run_json("walletprocesspsbt", psbt_trs_b64,
+                                "true", "DEFAULT", "true", "false",
+                                wallet="wallet_a")
+    test("taproot serial: wallet_a signed",
+         len(after_trs_a.get("psbt", "")) > 0)
+
+    # Step 2: wallet_b signs wallet_a's output -> both sigs present
+    after_trs_b = cli.run_json("walletprocesspsbt", after_trs_a["psbt"],
+                                "true", "DEFAULT", "true", "false",
+                                wallet="wallet_b")
+    test("taproot serial: wallet_b signed",
+         len(after_trs_b.get("psbt", "")) > 0)
+
+    # Write single file with both signatures
+    tmp_trs = tempfile.mkdtemp(prefix="psbt_tr_serial_")
+    trs_path = os.path.join(tmp_trs, "tr_serial_signed.psbt")
+    with open(trs_path, "wb") as f:
+        f.write(base64.b64decode(after_trs_b["psbt"]))
+    test("taproot serial: signed file written", os.path.exists(trs_path))
+
+    # ========================================================
+    section("24. Finalize via UI (Taproot Serial)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.set_input_files("#psbtFiles", [trs_path])
+    page.click("#combinePsbt")
+    page.wait_for_timeout(3000)
+
+    test("taproot serial: no error on finalize", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    trs_hex = (page.text_content("#combinedResult") or "").strip()
+    test("taproot serial: finalized hex present",
+         len(trs_hex) > 0 and re.match(r'^[0-9a-fA-F]+$', trs_hex) is not None,
+         f"length={len(trs_hex)}")
+
+    # ========================================================
+    section("25. Broadcast & Verify (Taproot Serial)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("taproot serial: no error on broadcast", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    trs_bcast = page.text_content("#broadcastResult")
+    test("taproot serial: broadcast shows TXID",
+         trs_bcast is not None and "Broadcasted TXID:" in trs_bcast,
+         f"got: {trs_bcast}")
+
+    trs_txid_match = re.search(r'[a-f0-9]{64}', trs_bcast or "")
+    test("taproot serial: TXID valid", trs_txid_match is not None)
+    trs_txid = trs_txid_match.group(0) if trs_txid_match else ""
+
+    if not trs_txid:
+        test("SKIP: taproot serial on-chain verification", False,
+             "broadcast failed")
+    else:
+        try:
+            api_post(server_url, "/api/mine", {"blocks": 1})
+        except Exception:
+            pass
+
+        decoded_trs = cli.run_json("getrawtransaction", trs_txid, "true")
+        test("taproot serial: transaction confirmed",
+             decoded_trs.get("confirmations", 0) >= 1,
+             f"confirmations={decoded_trs.get('confirmations', 0)}")
+        test("taproot serial: 2 inputs",
+             len(decoded_trs.get("vin", [])) == 2,
+             f"got {len(decoded_trs.get('vin', []))}")
+        test("taproot serial: 1 output",
+             len(decoded_trs.get("vout", [])) == 1,
+             f"got {len(decoded_trs.get('vout', []))}")
+        test("taproot serial: output amount correct",
+             round(decoded_trs["vout"][0]["value"] * 1e8) == TRS_SEND,
+             f"expected {TRS_SEND}, got {round(decoded_trs['vout'][0]['value'] * 1e8)}")
+
+    shutil.rmtree(tmp_trs, ignore_errors=True)
+
 
 # ============================================================
 # Main

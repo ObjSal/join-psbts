@@ -29,6 +29,9 @@ Bitcoin Core's `walletprocesspsbt` defaults to `finalize=true`, which sets `fina
 walletprocesspsbt <psbt> true "DEFAULT" true false
 ```
 
+### Fetched UTXO Cards
+`fetchUtxos()` uses `addFetchedInput()` to create compact read-only cards with hidden `<input>` elements (txid, vout, value, scriptPubKey) that preserve PSBT creation compatibility. The full address is shown in the source label. The fetch input is cleared after fetching. No empty input row is shown on page load — users click "+ Add Input (manual entry)" for manual UTXO entry.
+
 ### UTXO Container Selectors
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.
 

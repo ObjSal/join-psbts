@@ -4,10 +4,10 @@ Single-page web app for building, signing, combining, and broadcasting multi-wal
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0 (ESM via esm.sh), PaperCSS for styling, SortableJS for drag-and-drop reordering. Includes a donate button linking to `donate.html`.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1 (all ESM via esm.sh), PaperCSS for styling, SortableJS for drag-and-drop reordering. Includes a donate button linking to `donate.html`.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 88 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, and PSBT creation.
+- **`tests/test_psbt_builder.py`** — 101 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, and xpub derivation.
 - **`tests/test_regtest_e2e.py`** — 99 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
@@ -32,6 +32,20 @@ walletprocesspsbt <psbt> true "DEFAULT" true false
 
 ### Fetched UTXO Cards
 `fetchUtxos()` uses `addFetchedInput()` to create compact read-only cards with hidden `<input>` elements (txid, vout, value, scriptPubKey) that preserve PSBT creation compatibility. The full address is shown in the source label. The fetch input is cleared after fetching. No empty input row is shown on page load — users click "+ Add Input (manual entry)" for manual UTXO entry.
+
+### Xpub Auto-Derivation (Hardware Wallet)
+The HW wallet section includes an xpub field that auto-derives the compressed public key. Three functions handle this:
+- **`normalizeExtendedKey(key)`** — Converts SLIP-132 prefixes (ypub/zpub/vpub/upub and multisig variants) to canonical xpub/tpub using a version-bytes map, so `bip32.fromBase58()` accepts any format.
+- **`getRelativePath(fullPath, xpubDepth)`** — Extracts the unhardened child path relative to the xpub's depth (e.g., full path `m/84'/1'/0'/0/0` with depth 3 → `0/0`). Rejects hardened segments since xpub can only derive public children.
+- **`derivePublicKeyFromXpub(xpubStr, fullPath)`** — Normalizes the key, parses it with bip32, derives the child node, and returns the 66-hex compressed public key.
+
+When both xpub and path fields are filled, the pubkey field auto-populates and becomes read-only. When xpub is empty, pubkey reverts to manual entry (existing workflow preserved).
+
+### Hardened Path Normalization
+bitcoinjs-lib only recognizes `'` (apostrophe) for hardened BIP32 path segments. The `h` and `H` suffixes used by Coldcard and other hardware wallets are silently treated as unhardened, producing wrong indices in the PSBT binary. The derivation path is normalized (`h`/`H` → `'`) when reading from the DOM before writing to `bip32Derivation`.
+
+### No Default Empty Rows
+Neither input nor output containers have default empty rows on page load. Users click "+ Add Input (manual entry)" or "+ Add Output" to add rows manually, or use "Fetch & Add UTXOs" for inputs.
 
 ### UTXO Container Selectors
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.

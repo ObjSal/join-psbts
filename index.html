@@ -111,6 +111,51 @@
       margin-top: 0.8rem;
       border-left: 3px solid #f7931a;
     }
+    /* Compact fetched UTXO rows */
+    .utxo-fetched {
+      background: #f9f5ec;
+      border: 2px solid #e0d8c0;
+      border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+      padding: 0.4rem 0.7rem;
+      margin-bottom: 0.5rem;
+    }
+    .utxo-fetched-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .utxo-txid {
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      color: #777;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .utxo-sats {
+      font-weight: bold;
+      color: #f7931a;
+      white-space: nowrap;
+      font-size: 0.95rem;
+    }
+    .utxo-fetched .remove {
+      width: 28px;
+      flex: 0 0 28px;
+      padding: 0.15rem;
+      font-size: 0.8rem;
+      margin-top: 0;
+    }
+    .utxo-fetched-addr {
+      font-family: 'Courier New', monospace;
+      font-size: 0.78rem;
+      color: #999;
+      margin-top: 0.15rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .utxo-fetched .hw-toggle { margin-top: 0.15rem; }
     .subtitle {
       text-align: center;
       color: #888;
@@ -343,9 +388,9 @@
         label.innerHTML = `From: ${short} <span style="float:right;color:#f7931a;font-weight:bold;">${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})</span>`;
         document.getElementById('utxoContainer').appendChild(label);
 
-        // Add each UTXO as an input row (additive)
+        // Add each UTXO as a compact fetched row
         for (const utxo of utxos) {
-          addInput(null, utxo.txid, utxo.vout, utxo.value, scriptPubKey);
+          addFetchedInput(utxo.txid, utxo.vout, utxo.value, scriptPubKey, address);
         }
 
         statusEl.textContent = `Added ${utxos.length} UTXO(s). Fetching full transactions...`;
@@ -474,6 +519,55 @@
       });
     }
 
+
+
+    function addFetchedInput(txid, vout, value, scriptPubKey, address) {
+      const div = document.createElement('div');
+      div.setAttribute('data-utxo', '');
+      div.className = 'utxo-fetched';
+
+      const shortTxid = txid.slice(0, 10) + '\u2026' + txid.slice(-6);
+      const formattedSats = Number(value).toLocaleString();
+
+      div.innerHTML = `
+        <input type="hidden" value="${txid}">
+        <input type="hidden" value="${vout}">
+        <input type="hidden" value="${value}">
+        <input type="hidden" class="script-input" value="${scriptPubKey}">
+
+        <div class="utxo-fetched-row">
+          <span class="utxo-txid" title="${txid}:${vout}">${shortTxid}<b>:${vout}</b></span>
+          <span class="utxo-sats">${formattedSats} sats</span>
+          <button type="button" class="remove">\u2715</button>
+        </div>
+        <div class="utxo-fetched-addr" title="${address}">${address}</div>
+
+        <span class="hw-toggle">HW wallet info \u25b8</span>
+        <div class="hw-fields">
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="hw-xfp" placeholder="Master fingerprint (8 hex, e.g. aabbccdd)" style="width:200px;">
+            <input class="hw-path" placeholder="Derivation path (e.g. m/84'/0'/0'/0/5)" style="flex:1;">
+          </div>
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
+          </div>
+        </div>
+      `;
+
+      document.getElementById('utxoContainer').appendChild(div);
+
+      div.querySelector('.remove').addEventListener('click', () => {
+        div.remove();
+        updateFeeCalc();
+      });
+
+      const toggle = div.querySelector('.hw-toggle');
+      const hwFields = div.querySelector('.hw-fields');
+      toggle.addEventListener('click', () => {
+        const open = hwFields.classList.toggle('open');
+        toggle.textContent = open ? 'HW wallet info \u25be' : 'HW wallet info \u25b8';
+      });
+    }
 
 
     function addOutput(_, address = '', value = '') {
@@ -936,7 +1030,7 @@
         hexToBytes, estimateVirtualSize, createPsbtFromInputs, getSelectedNetwork,
         getMempoolBaseUrl, fetchRawTx, fetchAllNonWitnessUtxos, fetchUtxos,
         fetchFeeRates, rawTxCache,
-        colourField, addInput, addOutput, updateFeeCalc,
+        colourField, addInput, addFetchedInput, addOutput, updateFeeCalc,
         toggleChangeMode, refreshAllScriptLabels, downloadPsbt,
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },

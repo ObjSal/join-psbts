@@ -2,74 +2,166 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Bitcoin PSBT Builder (Testnet)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bitcoin PSBT Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Caveat:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://unpkg.com/papercss@1.9.2/dist/paper.min.css">
   <style>
-    body { font-family: sans-serif; max-width: 800px; margin: auto; padding: 1rem; }
-    textarea, input, button { width: 100%; margin-top: 0.5rem; }
-    /* NEW override – insert right below the rule above */
-    input[type="checkbox"] {
-      width:auto;          /* let it size naturally */
-      margin-top:0;        /* align with text baseline */
-      vertical-align:middle;
+    body {
+      font-family: 'Patrick Hand', cursive;
+      max-width: 850px;
+      margin: auto;
+      padding: 1.5rem;
+      background: #fdf6e3;
+      font-size: 1.05rem;
+      color: #333;
     }
-    section { margin-bottom: 2rem; }
+    h1, h2, h3 {
+      font-family: 'Caveat', cursive;
+      font-weight: 700;
+    }
+    h1 { font-size: 2.8rem; text-align: center; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.8rem; margin-top: 0; }
+    h3 { font-size: 1.4rem; }
+    .card {
+      margin-bottom: 1.5rem;
+      padding: 1.5rem;
+      background: #fffef9;
+    }
+    textarea, input, button { width: 100%; margin-top: 0.5rem; }
+    input[type="checkbox"] {
+      width: auto;
+      margin-top: 0;
+      vertical-align: middle;
+    }
+    input[type="file"] { border: none; }
     .psbt-upload { margin-bottom: 1rem; }
-    pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+    pre {
+      background: #f9f5ec;
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      border: 2px solid #ddd;
+      border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+    }
     input {
-      padding: 0.3rem;
+      padding: 0.4rem 0.5rem;
       font-size: 0.95rem;
+      font-family: 'Patrick Hand', cursive;
+      border: 2px solid #ccc;
+      transition: border-color 0.2s;
+      border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+      background: #fffef9;
+    }
+    input:focus { outline: none; border-color: #f7931a; }
+    select {
+      font-family: 'Patrick Hand', cursive;
+      font-size: 1.05rem;
+      padding: 0.3rem 0.5rem;
     }
     button {
-      padding: 0.3rem;
+      padding: 0.5rem 1rem;
+      font-family: 'Patrick Hand', cursive;
+      font-size: 1rem;
+      cursor: pointer;
     }
-    .sortable-ghost {
-      opacity: 0.4;
-      background: #ddd;
-    }
-    input:invalid {
-      border-color: red;
-    }
-    input {
-      border: 1px solid #ccc;
-      transition: border-color 0.2s;
-    }
-    .row        { display:flex; gap:0.5rem; width:100%; }
-    .row .grow  { flex:1; }          /* stretches to fill */
-    button.remove { width:50px; flex:0 0 50px; }  /* fixed‑width delete */
-    /* space below the output button without affecting checkbox alignment */
+    .btn-primary { background: #f7931a; border-color: #e8850f; color: #fff; }
+    .btn-primary:hover { background: #e8850f; }
+    .btn-secondary { background: #fffef9; border-color: #999; color: #333; }
+    .btn-secondary:hover { background: #f0ebe0; }
+    .btn-success { background: #2ecc71; border-color: #27ae60; color: #fff; }
+    .btn-success:hover { background: #27ae60; }
+    button.remove { width: 50px; flex: 0 0 50px; background: #fff; border-color: #e74c3c; color: #e74c3c; }
+    button.remove:hover { background: #e74c3c; color: #fff; }
+    .sortable-ghost { opacity: 0.4; background: #f0e8d0; }
+    .row { display: flex; gap: 0.5rem; width: 100%; }
+    .row .grow { flex: 1; }
     #addOutputButton { margin-bottom: 0.8rem; }
     .checkbox-row {
-      display:flex;
-      align-items:center;
-      gap:0.4rem;
-      margin-top:0.8rem;     /* breathing space */
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.8rem;
     }
-
-
+    .hw-toggle {
+      font-size: 0.85rem;
+      color: #888;
+      cursor: pointer;
+      user-select: none;
+      margin-top: 0.3rem;
+      display: inline-block;
+    }
+    .hw-toggle:hover { color: #f7931a; }
+    .hw-fields { display: none; margin-top: 0.3rem; }
+    .hw-fields.open { display: block; }
+    .hw-fields input { font-size: 0.85rem; }
+    .fee-presets { display: flex; gap: 0.4rem; margin-top: 0.4rem; margin-bottom: 0.3rem; }
+    .fee-presets button { width: auto; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
+    .fee-preset.active { background: #f7931a; color: #fff; border-color: #e8850f; }
+    .utxo-source-label {
+      font-size: 0.85rem;
+      color: #666;
+      background: #f0e8d0;
+      padding: 0.3rem 0.6rem;
+      border-radius: 3px;
+      margin-bottom: 0.5rem;
+      margin-top: 0.8rem;
+      border-left: 3px solid #f7931a;
+    }
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-top: -0.3rem;
+      margin-bottom: 1.5rem;
+      font-size: 1.1rem;
+    }
+    .network-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+      justify-content: center;
+    }
+    .script-label { font-size: 0.85rem; color: #666; margin-top: 0.2rem; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 </head>
 <body>
-  <h1>Bitcoin PSBT Builder</h1>
-  <label for="network">Select Network:</label>
-  <select id="network">
-    <option value="mainnet">Mainnet</option>
-    <option value="testnet">Testnet4</option>
-    <option value="regtest">Regtest</option>
-  </select>
-  <section>
+  <h1>&#x20BF; Bitcoin PSBT Builder</h1>
+  <p class="subtitle">Build, sign & broadcast multi-wallet transactions</p>
+
+  <div class="network-bar">
+    <label for="network" style="margin:0;">Network:</label>
+    <select id="network">
+      <option value="mainnet">Mainnet</option>
+      <option value="testnet">Testnet4</option>
+      <option value="regtest">Regtest</option>
+    </select>
+  </div>
+
+  <div class="card">
     <h2>1. Create PSBT</h2>
 
     <div>
       <h3>Inputs (UTXOs)</h3>
+      <div id="utxoFetchGroup" style="margin-bottom:1rem;">
+        <div class="row">
+          <input class="grow" type="text" id="fetchAddress" placeholder="Enter Bitcoin address to fetch UTXOs">
+          <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:160px;flex:0 0 160px;">Fetch & Add UTXOs</button>
+        </div>
+        <div id="fetchStatus" style="font-size:0.85rem;color:#888;margin-top:0.3rem;"></div>
+      </div>
       <div id="utxoContainer"></div>
-      <button type="button" id="addInputButton">+ Add Input</button>
+      <button type="button" id="addInputButton" class="btn-secondary">+ Add Input</button>
     </div>
 
-    <div>
+    <div style="margin-top:1rem;">
       <h3>Outputs</h3>
       <div id="outputContainer"></div>
-      <button type="button" id="addOutputButton">+ Add Output</button>
+      <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
     </div>
 
     <div class="checkbox-row">
@@ -77,38 +169,40 @@
       <label for="includeChange" style="margin:0;">Add change output</label>
     </div>
 
-
-
     <div id="feeRateGroup">
       <label>Fee Rate (sat/vB)</label>
-      <input type="number" id="feeRate" placeholder="e.g. 10">
+      <div class="fee-presets" id="feePresets">
+        <button type="button" class="fee-preset btn-secondary" data-speed="fast">Fast: --</button>
+        <button type="button" class="fee-preset btn-secondary" data-speed="medium">Med: --</button>
+        <button type="button" class="fee-preset btn-secondary" data-speed="slow">Slow: --</button>
+        <button type="button" id="refreshFees" class="btn-secondary" style="font-size:0.85rem;padding:0.3rem 0.5rem;">&#x21bb;</button>
+      </div>
+      <input type="number" id="feeRate" placeholder="or enter custom sat/vB">
     </div>
 
-    <!-- fee label for no‑change mode -->
-    <div id="feeCalc" style="margin-top:0.5rem;color:#555;display:none;"></div>
+    <div id="feeCalc" style="margin-top:0.5rem;color:#888;display:none;"></div>
 
-    <!-- keep existing Change Address block -->
     <div id="changeAddrGroup">
       <label>Change Address (must match network)</label>
-      <input type="text" id="changeAddress" placeholder="tb1q...">
+      <input type="text" id="changeAddress" placeholder="bc1q... / tb1q...">
     </div>
 
-    <button id="createPsbt">Create & Download PSBT</button>
-  </section>
+    <button id="createPsbt" class="btn-primary" style="margin-top:1rem;">Create & Download PSBT</button>
+  </div>
 
-  <section>
+  <div class="card">
     <h2>2. Upload Signed PSBTs</h2>
     <input type="file" id="psbtFiles" multiple class="psbt-upload"/>
-    <button id="combinePsbt">Combine & Finalize</button>
+    <button id="combinePsbt" class="btn-primary">Combine & Finalize</button>
     <pre id="combinedResult"></pre>
-  </section>
+  </div>
 
-  <section>
+  <div class="card">
     <h2>3. Broadcast Transaction</h2>
-    <button id="downloadFinalPsbt">Download Final PSBT</button>
-    <button id="broadcastTx">Broadcast via mempool.space</button>
+    <button id="downloadFinalPsbt" class="btn-secondary">Download Final PSBT</button>
+    <button id="broadcastTx" class="btn-success" style="margin-top:0.5rem;">Broadcast via mempool.space</button>
     <pre id="broadcastResult"></pre>
-  </section>
+  </div>
 
   <script type="module">
     import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
@@ -118,6 +212,45 @@
     bitcoin.initEccLib(ecc);
     let finalPsbt = null;
     let finalTxHex = null;
+
+    // Detect local server mode (regtest via server, mainnet/testnet via mempool.space)
+    let serverMode = false;
+    (async function detectServer() {
+      try {
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+        const data = await resp.json();
+        serverMode = data.status === 'ok';
+      } catch { serverMode = false; }
+
+      // Hide regtest option if no server (GitHub Pages) — skip in test mode
+      if (!serverMode && !window.__TEST_MODE__) {
+        const opt = document.querySelector('#network option[value="regtest"]');
+        if (opt) opt.remove();
+      }
+    })();
+
+    // Cache of txid → full raw transaction hex (for nonWitnessUtxo)
+    const rawTxCache = new Map();
+
+    async function fetchRawTx(txid) {
+      if (rawTxCache.has(txid)) return rawTxCache.get(txid);
+      const base = getMempoolBaseUrl();
+      const resp = await fetch(`${base}/tx/${txid}/hex`);
+      if (!resp.ok) throw new Error(`Failed to fetch tx ${txid}: ${resp.status}`);
+      const hex = await resp.text();
+      rawTxCache.set(txid, hex);
+      return hex;
+    }
+
+    async function fetchAllNonWitnessUtxos() {
+      const txids = new Set();
+      document.querySelectorAll('[data-utxo]').forEach(row => {
+        const txid = row.querySelector('input').value.trim();
+        if (txid && txid.length === 64) txids.add(txid);
+      });
+      const promises = Array.from(txids).map(txid => fetchRawTx(txid));
+      await Promise.allSettled(promises);
+    }
 
     function getSelectedNetwork() {
       const net = document.getElementById('network').value;
@@ -134,6 +267,88 @@
         scriptHash: 0xc4,
         wif: 0xef,
       };
+    }
+
+    function getMempoolBaseUrl() {
+      const net = document.getElementById('network').value;
+      if (net === 'regtest' && serverMode) return '/api';
+      if (net === 'testnet') return 'https://mempool.space/testnet4/api';
+      if (net === 'regtest') return 'https://mempool.space/signet/api';
+      return 'https://mempool.space/api';
+    }
+
+    async function fetchFeeRates() {
+      const buttons = document.querySelectorAll('.fee-preset');
+      try {
+        const base = getMempoolBaseUrl();
+        const resp = await fetch(`${base}/v1/fees/recommended`);
+        if (!resp.ok) throw new Error(`Fee API error: ${resp.status}`);
+        const fees = await resp.json();
+        buttons.forEach(btn => {
+          const speed = btn.dataset.speed;
+          if (speed === 'fast') btn.textContent = `Fast: ${fees.fastestFee}`;
+          if (speed === 'medium') btn.textContent = `Med: ${fees.halfHourFee}`;
+          if (speed === 'slow') btn.textContent = `Slow: ${fees.hourFee}`;
+          btn.dataset.rate = speed === 'fast' ? fees.fastestFee
+            : speed === 'medium' ? fees.halfHourFee : fees.hourFee;
+        });
+      } catch {
+        buttons.forEach(btn => {
+          btn.textContent = btn.dataset.speed === 'fast' ? 'Fast: N/A'
+            : btn.dataset.speed === 'medium' ? 'Med: N/A' : 'Slow: N/A';
+        });
+      }
+    }
+
+    async function fetchUtxos() {
+      const address = document.getElementById('fetchAddress').value.trim();
+      const statusEl = document.getElementById('fetchStatus');
+      const net = getSelectedNetwork();
+
+      if (!address) { statusEl.textContent = 'Enter an address first.'; return; }
+      if (!validateBitcoinAddress(address, net)) { statusEl.textContent = 'Invalid address for selected network.'; return; }
+
+      statusEl.textContent = 'Fetching UTXOs...';
+
+      try {
+        const base = getMempoolBaseUrl();
+        const resp = await fetch(`${base}/address/${address}/utxo`);
+        if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+        const utxos = await resp.json();
+
+        if (utxos.length === 0) {
+          statusEl.textContent = 'No UTXOs found for this address.';
+          return;
+        }
+
+        // Derive scriptPubKey from the address
+        const scriptPubKey = Buffer.from(
+          bitcoin.address.toOutputScript(address, net)
+        ).toString('hex');
+
+        // Add source label
+        const label = document.createElement('div');
+        label.className = 'utxo-source-label';
+        const short = address.length > 20 ? address.slice(0, 10) + '...' + address.slice(-8) : address;
+        label.textContent = `From: ${short}`;
+        document.getElementById('utxoContainer').appendChild(label);
+
+        // Add each UTXO as an input row (additive)
+        for (const utxo of utxos) {
+          addInput(null, utxo.txid, utxo.vout, utxo.value, scriptPubKey);
+        }
+
+        statusEl.textContent = `Added ${utxos.length} UTXO(s). Fetching full transactions...`;
+
+        // Fetch raw txs for nonWitnessUtxo
+        const txids = new Set(utxos.map(u => u.txid));
+        await Promise.allSettled(Array.from(txids).map(txid => fetchRawTx(txid)));
+
+        statusEl.textContent = `Added ${utxos.length} UTXO(s) with full transaction data.`;
+        updateFeeCalc();
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+      }
     }
 
     function validateBitcoinAddress(address, network) {
@@ -196,6 +411,18 @@
         <div class="script-label" style="font-size:0.85rem;color:#555;margin-top:0.2rem;">
           Address: <span>-</span>
         </div>
+
+        <!-- Collapsible HW wallet signing info -->
+        <span class="hw-toggle">HW wallet info ▸</span>
+        <div class="hw-fields">
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="hw-xfp" placeholder="Master fingerprint (8 hex, e.g. aabbccdd)" style="width:200px;">
+            <input class="hw-path" placeholder="Derivation path (e.g. m/84'/0'/0'/0/5)" style="flex:1;">
+          </div>
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
+          </div>
+        </div>
       `;
 
       document.getElementById('utxoContainer').appendChild(div);
@@ -204,6 +431,14 @@
       div.querySelector('.remove').addEventListener('click', () => {
         div.remove();
         updateFeeCalc();        // keep fee label correct
+      });
+
+      // HW wallet info toggle
+      const toggle = div.querySelector('.hw-toggle');
+      const hwFields = div.querySelector('.hw-fields');
+      toggle.addEventListener('click', () => {
+        const open = hwFields.classList.toggle('open');
+        toggle.textContent = open ? 'HW wallet info ▾' : 'HW wallet info ▸';
       });
 
       // live script validation (unchanged)
@@ -218,6 +453,15 @@
       };
       scriptInput.addEventListener('input', updateLabel);
       updateLabel();
+
+      // Auto-fetch raw tx when txid field loses focus
+      const txidInput = div.querySelector('input');
+      txidInput.addEventListener('blur', async () => {
+        const tid = txidInput.value.trim();
+        if (tid && tid.length === 64 && !rawTxCache.has(tid)) {
+          try { await fetchRawTx(tid); } catch (e) { /* silent */ }
+        }
+      });
     }
 
 
@@ -321,7 +565,7 @@
       // ---------------- add inputs ----------------
       let totalInput = 0;
       for (const u of utxos) {
-        psbt.addInput({
+        const inputData = {
           hash:      u.txid,
           index:     u.vout,
           sequence:  0xfffffffd,               // RBF
@@ -329,7 +573,24 @@
             script: hexToBytes(u.scriptPubKey),
             value:  BigInt(u.value),
           },
-        });
+        };
+
+        // Add nonWitnessUtxo if cached (for HW wallet fee verification)
+        const rawHex = rawTxCache.get(u.txid);
+        if (rawHex) {
+          inputData.nonWitnessUtxo = Buffer.from(rawHex, 'hex');
+        }
+
+        // Add bip32Derivation if provided (for HW wallet key identification)
+        if (u.xfp && u.pubkey && u.derivationPath) {
+          inputData.bip32Derivation = [{
+            masterFingerprint: Buffer.from(u.xfp, 'hex'),
+            pubkey: Buffer.from(u.pubkey, 'hex'),
+            path: u.derivationPath,
+          }];
+        }
+
+        psbt.addInput(inputData);
         totalInput += u.value;
       }
 
@@ -375,18 +636,28 @@
       link.click();
     }
 
-    document.getElementById('createPsbt').onclick = () => {
+    document.getElementById('createPsbt').onclick = async () => {
       try {
-        const utxos = Array.from(document.getElementById('utxoContainer').children).map(row => {
-          const [txidInput, voutInput, valueInput, scriptInput] = row.querySelectorAll('input');
+        // Attempt to fetch any missing raw transactions for nonWitnessUtxo
+        await fetchAllNonWitnessUtxos().catch(() => {});
+
+        const utxos = Array.from(document.querySelectorAll('#utxoContainer [data-utxo]')).map(row => {
+          const inputs = row.querySelectorAll('input');
+          const [txidInput, voutInput, valueInput, scriptInput] = inputs;
+          const xfpInput = row.querySelector('.hw-xfp');
+          const pathInput = row.querySelector('.hw-path');
+          const pubkeyInput = row.querySelector('.hw-pubkey');
           return {
             txid: txidInput.value.trim(),
             vout: parseInt(voutInput.value),
             value: parseInt(valueInput.value),
             scriptPubKey: scriptInput.value.trim(),
+            xfp: xfpInput ? xfpInput.value.trim() : '',
+            derivationPath: pathInput ? pathInput.value.trim() : '',
+            pubkey: pubkeyInput ? pubkeyInput.value.trim() : '',
           };
         });
-        const outputs = Array.from(document.getElementById('outputContainer').children).map(row => {
+        const outputs = Array.from(document.querySelectorAll('#outputContainer [data-output]')).map(row => {
           const [addressInput, valueInput] = row.querySelectorAll('input');
           return {
             address: addressInput.value.trim(),
@@ -461,10 +732,7 @@
     document.getElementById('broadcastTx').onclick = async () => {
       if (!finalTxHex) return alert("No finalized transaction available");
 
-      const network = getSelectedNetwork();
-      let broadcastUrl = 'https://mempool.space/api/tx';
-      if (network === 'testnet') broadcastUrl = 'https://mempool.space/testnet4/api/tx';
-      if (network === 'regtest') broadcastUrl = 'https://mempool.space/signet/api/tx';
+      const broadcastUrl = getMempoolBaseUrl() + '/tx';
 
       try {
         const response = await fetch(broadcastUrl, {
@@ -499,6 +767,31 @@
     const addOutputButton = document.getElementById('addOutputButton');
     addOutputButton.addEventListener('click', addOutput);
 
+    // Fee preset buttons
+    document.querySelectorAll('.fee-preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rate = btn.dataset.rate;
+        if (rate) {
+          document.getElementById('feeRate').value = rate;
+          document.querySelectorAll('.fee-preset').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          updateFeeCalc();
+        }
+      });
+    });
+    document.getElementById('refreshFees').addEventListener('click', fetchFeeRates);
+    // Fetch fee rates on load
+    fetchFeeRates();
+
+    // Fetch UTXOs button
+    document.getElementById('fetchUtxosBtn').addEventListener('click', fetchUtxos);
+    // Live-validate the fetch address input
+    const fetchAddrInput = document.getElementById('fetchAddress');
+    fetchAddrInput.addEventListener('input', () => {
+      const net = getSelectedNetwork();
+      colourField(fetchAddrInput, validateBitcoinAddress(fetchAddrInput.value.trim(), net));
+    });
+
     // live‑validate change address like output addresses
     const changeAddrInput = document.getElementById('changeAddress');
 
@@ -512,7 +805,17 @@
     validateChangeAddr();        // run once at load
 
 
-    document.getElementById('network').addEventListener('change', refreshAllScriptLabels);
+    document.getElementById('network').addEventListener('change', () => {
+      rawTxCache.clear();
+      refreshAllScriptLabels();
+      fetchFeeRates().catch(() => {});
+      // Re-validate fetch address
+      const fa = document.getElementById('fetchAddress');
+      if (fa.value.trim()) {
+        const net = getSelectedNetwork();
+        colourField(fa, validateBitcoinAddress(fa.value.trim(), net));
+      }
+    });
 
     new Sortable(document.getElementById('utxoContainer'), {
       animation: 150,
@@ -599,6 +902,22 @@
 
     addInput();
     addOutput();
+
+    // Test hook — expose internal functions for automated testing
+    if (window.__TEST_MODE__) {
+      window._fn = {
+        validateBitcoinAddress, validateScriptPubKey, decodeAddressFromScript,
+        hexToBytes, estimateVirtualSize, createPsbtFromInputs, getSelectedNetwork,
+        getMempoolBaseUrl, fetchRawTx, fetchAllNonWitnessUtxos, fetchUtxos,
+        fetchFeeRates, rawTxCache,
+        colourField, addInput, addOutput, updateFeeCalc,
+        toggleChangeMode, refreshAllScriptLabels, downloadPsbt,
+        get serverMode() { return serverMode; },
+        set serverMode(v) { serverMode = v; },
+      };
+      window._bitcoin = bitcoin;
+      window._Buffer = Buffer;
+    }
   </script>
 </body>
 </html>

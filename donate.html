@@ -79,12 +79,12 @@
 
     <div class="qr-section">
       <div class="address-label">Scan to Donate</div>
-      <canvas id="qrCode"></canvas>
+      <a href="bitcoin:bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8"><canvas id="qrCode"></canvas></a>
       <div class="address-label" style="margin-top: 0.5rem;">Bitcoin Address (SegWit)</div>
-      <div class="address-display" id="addressDisplay" onclick="copyAddress()">
+      <a href="bitcoin:bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8" class="address-display" id="addressDisplay" style="display:block;text-decoration:none;color:inherit;">
         bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8
-      </div>
-      <div class="copy-hint" id="copyHint">Click to copy</div>
+      </a>
+      <div class="copy-hint" id="copyHint">Click to open wallet · Right-click to copy</div>
     </div>
 
     <div class="generated-with">
@@ -104,10 +104,11 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <script>
     const ADDRESS = 'bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8';
+    const BIP21_URI = 'bitcoin:' + ADDRESS;
 
     (function() {
       const qr = qrcode(0, 'M');
-      qr.addData(ADDRESS);
+      qr.addData(BIP21_URI.toUpperCase());
       qr.make();
       const cellSize = 5;
       const margin = 4;
@@ -129,17 +130,6 @@
       }
     })();
 
-    function copyAddress() {
-      navigator.clipboard.writeText(ADDRESS).then(() => {
-        const hint = document.getElementById('copyHint');
-        hint.textContent = 'Copied!';
-        hint.style.color = '#2ecc71';
-        setTimeout(() => {
-          hint.textContent = 'Click to copy';
-          hint.style.color = '';
-        }, 2000);
-      });
-    }
   </script>
 </body>
 </html>

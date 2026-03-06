@@ -189,6 +189,7 @@
 
   <div class="card">
     <h2>1. Create PSBT</h2>
+    <p style="color:#888;font-size:0.85rem;margin-top:0;">Add inputs from each wallet by fetching UTXOs, set the outputs and fee, then download the unsigned PSBT file. Remove individual UTXOs from the list if you don't want to spend the entire wallet.</p>
 
     <div>
       <h3>Inputs (UTXOs)</h3>
@@ -200,7 +201,7 @@
         <div id="fetchStatus" style="font-size:0.85rem;color:#888;margin-top:0.3rem;"></div>
       </div>
       <div id="utxoContainer"></div>
-      <button type="button" id="addInputButton" class="btn-secondary">+ Add Input</button>
+      <button type="button" id="addInputButton" class="btn-secondary">+ Add Input <span style="color:#999;font-size:0.82rem;font-weight:normal;">(manual entry)</span></button>
     </div>
 
     <div style="margin-top:1rem;">
@@ -237,6 +238,7 @@
 
   <div class="card">
     <h2>2. Upload Signed PSBTs</h2>
+    <p style="color:#888;font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here to combine and finalize.</p>
     <input type="file" id="psbtFiles" multiple class="psbt-upload"/>
     <button id="combinePsbt" class="btn-primary">Combine & Finalize</button>
     <pre id="combinedResult"></pre>
@@ -244,9 +246,15 @@
 
   <div class="card">
     <h2>3. Broadcast Transaction</h2>
+    <p style="color:#888;font-size:0.85rem;margin-top:0;">Download the final PSBT for your records or broadcast the signed transaction to the Bitcoin network.</p>
     <button id="downloadFinalPsbt" class="btn-secondary">Download Final PSBT</button>
     <button id="broadcastTx" class="btn-success" style="margin-top:0.5rem;">Broadcast via mempool.space</button>
     <pre id="broadcastResult"></pre>
+  </div>
+
+  <div style="text-align: center; padding: 24px 16px 12px; margin-top: 32px; border-top: 1px solid #e0e0e0; color: #999; font-size: 12px; line-height: 1.6;">
+    &#9888;&#65039; <strong>No Warranty &middot; Use at Your Own Risk</strong><br>
+    This Bitcoin PSBT Builder is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds from transactions created with this tool. Always verify addresses, amounts, and fees before signing and broadcasting.
   </div>
 
   <script type="module">
@@ -339,6 +347,11 @@
           btn.dataset.rate = speed === 'fast' ? fees.fastestFee
             : speed === 'medium' ? fees.halfHourFee : fees.hourFee;
         });
+        // Default to slow if no fee rate is set
+        if (!document.getElementById('feeRate').value) {
+          const slowBtn = document.querySelector('.fee-preset[data-speed="slow"]');
+          if (slowBtn) slowBtn.click();
+        }
       } catch {
         buttons.forEach(btn => {
           btn.textContent = btn.dataset.speed === 'fast' ? 'Fast: N/A'
@@ -384,8 +397,7 @@
         const totalBtc = (totalSats / 1e8).toFixed(8).replace(/\.?0+$/, '');
         const label = document.createElement('div');
         label.className = 'utxo-source-label';
-        const short = address.length > 20 ? address.slice(0, 10) + '...' + address.slice(-8) : address;
-        label.innerHTML = `From: ${short} <span style="float:right;color:#f7931a;font-weight:bold;">${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})</span>`;
+        label.innerHTML = `From: ${address} <span style="float:right;color:#f7931a;font-weight:bold;">${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})</span>`;
         document.getElementById('utxoContainer').appendChild(label);
 
         // Add each UTXO as a compact fetched row
@@ -400,6 +412,7 @@
         await Promise.allSettled(Array.from(txids).map(txid => fetchRawTx(txid)));
 
         statusEl.textContent = `Added ${utxos.length} UTXO(s) with full transaction data.`;
+        document.getElementById('fetchAddress').value = '';
         updateFeeCalc();
       } catch (err) {
         statusEl.textContent = 'Error: ' + err.message;
@@ -1020,7 +1033,6 @@
 
 
 
-    addInput();
     addOutput();
 
     // Test hook — expose internal functions for automated testing

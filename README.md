@@ -26,11 +26,12 @@ Both approaches work through the same Combine & Finalize step.
 
 ## Features
 
-- **Fetch UTXOs** by address from mempool.space (or local regtest server)
-- **Fee rate presets** pulled live from the network (fast/medium/slow)
+- **Fetch UTXOs** by address from mempool.space (or local regtest server), displayed as compact read-only cards
+- **Fee rate presets** pulled live from the network (fast/medium/slow), defaults to slow
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and public key fields
 - **Drag-and-drop reordering** of inputs and outputs
 - **Network support** for Mainnet, Testnet4, and Regtest
+- **Guided workflow** with brief instructions under each step
 - **No server required** -- runs entirely in the browser on GitHub Pages
 - **Regtest mode** with a local Python server for development and testing
 

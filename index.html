@@ -227,6 +227,8 @@
         const opt = document.querySelector('#network option[value="regtest"]');
         if (opt) opt.remove();
       }
+      // Update broadcast button label now that serverMode is known
+      if (typeof updateBroadcastLabel === 'function') updateBroadcastLabel();
     })();
 
     // Cache of txid → full raw transaction hex (for nonWitnessUtxo)
@@ -321,16 +323,24 @@
           return;
         }
 
+        // Remove empty input rows before adding fetched UTXOs
+        document.querySelectorAll('#utxoContainer [data-utxo]').forEach(row => {
+          const txid = row.querySelector('input').value.trim();
+          if (!txid) row.remove();
+        });
+
         // Derive scriptPubKey from the address
         const scriptPubKey = Buffer.from(
           bitcoin.address.toOutputScript(address, net)
         ).toString('hex');
 
-        // Add source label
+        // Add source label with total
+        const totalSats = utxos.reduce((sum, u) => sum + u.value, 0);
+        const totalBtc = (totalSats / 1e8).toFixed(8).replace(/\.?0+$/, '');
         const label = document.createElement('div');
         label.className = 'utxo-source-label';
         const short = address.length > 20 ? address.slice(0, 10) + '...' + address.slice(-8) : address;
-        label.textContent = `From: ${short}`;
+        label.innerHTML = `From: ${short} <span style="float:right;color:#f7931a;font-weight:bold;">${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})</span>`;
         document.getElementById('utxoContainer').appendChild(label);
 
         // Add each UTXO as an input row (additive)
@@ -805,10 +815,26 @@
     validateChangeAddr();        // run once at load
 
 
+    function updateBroadcastLabel() {
+      const net = document.getElementById('network').value;
+      const btn = document.getElementById('broadcastTx');
+      if (net === 'regtest' && serverMode) {
+        btn.textContent = 'Broadcast via regtest';
+      } else if (net === 'testnet') {
+        btn.textContent = 'Broadcast via mempool.space (testnet4)';
+      } else if (net === 'regtest') {
+        btn.textContent = 'Broadcast via mempool.space (signet)';
+      } else {
+        btn.textContent = 'Broadcast via mempool.space';
+      }
+    }
+    updateBroadcastLabel();
+
     document.getElementById('network').addEventListener('change', () => {
       rawTxCache.clear();
       refreshAllScriptLabels();
       fetchFeeRates().catch(() => {});
+      updateBroadcastLabel();
       // Re-validate fetch address
       const fa = document.getElementById('fetchAddress');
       if (fa.value.trim()) {
@@ -917,6 +943,7 @@
       };
       window._bitcoin = bitcoin;
       window._Buffer = Buffer;
+      window._ecc = ecc;
     }
   </script>
 </body>

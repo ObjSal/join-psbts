@@ -99,3 +99,21 @@ Fund the wallet at the [testnet4 faucet](https://mempool.space/testnet4/faucet).
 - **JS Libraries** (loaded via CDN): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [PaperCSS](https://www.getpapercss.com/), [SortableJS](https://sortablejs.github.io/Sortable/)
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)
+
+## Support This Project
+
+Building and maintaining open-source Bitcoin tools takes time, caffeine, and compute. If you find this project useful, consider buying me a coffee — with Bitcoin!
+
+<div align="center">
+
+**`bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8`**
+
+*This address was generated using [₿itcoin Gift Paper Wallet](https://objsal.github.io/bitcoin-gift-paper-wallet/)*
+
+</div>
+
+Your donation helps cover the cost of Claude (the AI that helped build this), keeps the coffee flowing, and fuels development of more open-source Bitcoin tools. No VC funding, no ads, no tracking — just open-source code and generous supporters like you.
+
+## License
+
+This project is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds from transactions created with this tool. Always verify addresses, amounts, and fees before signing and broadcasting.

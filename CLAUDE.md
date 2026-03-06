@@ -4,7 +4,8 @@ Single-page web app for building, signing, combining, and broadcasting multi-wal
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0 (ESM via esm.sh), PaperCSS for styling, SortableJS for drag-and-drop reordering.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0 (ESM via esm.sh), PaperCSS for styling, SortableJS for drag-and-drop reordering. Includes a donate button linking to `donate.html`.
+- **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
 - **`tests/test_psbt_builder.py`** — 88 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, and PSBT creation.
 - **`tests/test_regtest_e2e.py`** — 99 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing. Requires bitcoind/bitcoin-cli.

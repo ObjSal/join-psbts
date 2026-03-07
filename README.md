@@ -32,7 +32,7 @@ Both approaches work through the same Combine & Finalize step.
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
 - **QR code scanning** to upload signed PSBTs from hardware wallets via camera, with BBQr multi-part support and progress bar -- combine QR-scanned and file-uploaded PSBTs from different sources
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
-- **CLI signing tool** (`sign-psbt.py`) for hot wallet signing with WIF keys
+- **CLI signing tool** (`tools/sign-psbt.py`) for hot wallet signing with WIF keys
 - **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
 - **Guided workflow** with brief instructions under each step
@@ -97,7 +97,7 @@ For hot wallet signing without Bitcoin Core:
 
 ```bash
 pip install embit
-python3 sign-psbt.py unsigned.psbt <WIF-private-key>
+python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 # Outputs: unsigned-signed.psbt
 ```
 
@@ -105,7 +105,7 @@ python3 sign-psbt.py unsigned.psbt <WIF-private-key>
 
 - Python 3
 - [Playwright](https://playwright.dev/python/): `pip install playwright && playwright install chromium`
-- [embit](https://github.com/nicolo-ribaudo/embit): `pip install embit` (for `sign-psbt.py` only)
+- [embit](https://github.com/nicolo-ribaudo/embit): `pip install embit` (for `tools/sign-psbt.py` only)
 - Bitcoin Core v30+ (for regtest E2E tests only)
 
 ## Tech Stack

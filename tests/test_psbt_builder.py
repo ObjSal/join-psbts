@@ -645,9 +645,19 @@ def run_tests(page, base_url):
     }}""")
     page.fill("#feeRate", "10")
 
-    # Intercept download (global dialog handler auto-accepts percentage warning)
+    # Click Create PSBT and verify results area appears
+    page.click("#createPsbt")
+    time.sleep(1)
+    test("PSBT result area visible", page.is_visible("#psbtResult"))
+
+    # Verify PSBT hex is shown
+    psbt_hex = page.text_content("#psbtHex")
+    test("PSBT hex is non-empty", len(psbt_hex) > 0, f"len={len(psbt_hex)}")
+    test("PSBT hex starts with 70736274ff", psbt_hex.startswith("70736274ff"), f"got {psbt_hex[:20]}")
+
+    # Click Download and verify download
     with page.expect_download() as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     download = download_info.value
     test("PSBT download triggered", download is not None)
     test("PSBT filename is unsigned.psbt", download.suggested_filename == "unsigned.psbt")
@@ -666,17 +676,18 @@ def run_tests(page, base_url):
 
     # Missing fee rate
     page.select_option("#network", "mainnet")
+    time.sleep(2)  # wait for fetchFeeRates to resolve
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
     page.evaluate(f"""() => {{
         window._fn.addInput(null, "", 0, 100000, "{P2WPKH_SCRIPT}");
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
     }}""")
-    page.fill("#feeRate", "")
+    page.evaluate("() => document.getElementById('feeRate').value = ''")
 
     _all_dialogs.clear()
     page.click("#createPsbt")
-    time.sleep(1)
+    time.sleep(2)
     test("missing fee rate shows alert", len(_all_dialogs) > 0 and "fee" in _all_dialogs[-1].lower(),
          f"got {_all_dialogs}")
 
@@ -704,8 +715,12 @@ def run_tests(page, base_url):
     }}""")
     page.fill("#feeRate", "1")
 
+    page.click("#createPsbt")
+    time.sleep(1)
+    test("implicit fee PSBT result visible", page.is_visible("#psbtResult"))
+
     with page.expect_download() as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     download = download_info.value
     test("implicit fee PSBT download works", download is not None)
 

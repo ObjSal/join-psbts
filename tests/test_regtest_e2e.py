@@ -328,8 +328,10 @@ def run_tests(page, base_url, cli, server_url):
 
     # Click Create & Download and expect a file download
     all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
     with page.expect_download(timeout=30000) as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     download = download_info.value
 
     test("no unexpected error on create",
@@ -535,8 +537,10 @@ def run_tests(page, base_url, cli, server_url):
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
     all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
     with page.expect_download(timeout=30000) as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     dl2 = download_info.value
 
     test("serial: no unexpected error on create",
@@ -725,8 +729,10 @@ def run_tests(page, base_url, cli, server_url):
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
     all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
     with page.expect_download(timeout=30000) as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     dl_tr = download_info.value
 
     test("taproot: no unexpected error on create",
@@ -905,8 +911,10 @@ def run_tests(page, base_url, cli, server_url):
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
     all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
     with page.expect_download(timeout=30000) as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     dl_trs = download_info.value
 
     test("taproot serial: no unexpected error on create",

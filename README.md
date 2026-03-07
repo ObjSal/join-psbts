@@ -10,7 +10,7 @@ This tool lets multiple wallet holders collaborate on a single Bitcoin transacti
 
 ### Workflow
 
-1. **Create** -- Add inputs (UTXOs) from multiple wallets, set outputs and fee, download the unsigned PSBT
+1. **Create** -- Add inputs (UTXOs) from multiple wallets, set outputs and fee, then download the unsigned PSBT or display it as a QR code
 2. **Sign** -- Each wallet holder signs the PSBT with their own wallet (hardware wallet, Bitcoin Core, etc.)
 3. **Combine & Finalize** -- Upload all signed PSBTs, the tool merges signatures and produces the raw transaction
 4. **Broadcast** -- Send the finalized transaction to the Bitcoin network via mempool.space
@@ -29,7 +29,10 @@ Both approaches work through the same Combine & Finalize step.
 - **Fetch UTXOs** by address from mempool.space (or local regtest server), displayed as compact read-only cards
 - **Fee rate presets** pulled live from the network (fast/medium/slow), with estimated fee and available sats display
 - **Output percentage labels** showing each output's share of total input, with a Wipe option to sweep remaining balance
+- **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
+- **CLI signing tool** (`sign-psbt.py`) for hot wallet signing with WIF keys
+- **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
 - **Guided workflow** with brief instructions under each step
 - **No server required** -- runs entirely in the browser on GitHub Pages
@@ -58,7 +61,7 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- 108 tests, no bitcoind needed (~15s)
+# Unit tests -- 111 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
 # E2E regtest tests -- 99 tests, requires bitcoind + bitcoin-cli (~90s)
@@ -87,16 +90,27 @@ The testnet4 E2E test needs a pre-funded wallet. Provide credentials via:
 
 Fund the wallet at the [testnet4 faucet](https://mempool.space/testnet4/faucet).
 
+### CLI Signing Tool
+
+For hot wallet signing without Bitcoin Core:
+
+```bash
+pip install embit
+python3 sign-psbt.py unsigned.psbt <WIF-private-key>
+# Outputs: unsigned-signed.psbt
+```
+
 ### Prerequisites
 
 - Python 3
 - [Playwright](https://playwright.dev/python/): `pip install playwright && playwright install chromium`
+- [embit](https://github.com/nicolo-ribaudo/embit): `pip install embit` (for `sign-psbt.py` only)
 - Bitcoin Core v30+ (for regtest E2E tests only)
 
 ## Tech Stack
 
 - **Frontend**: Single `index.html` file, no build step
-- **JS Libraries** (loaded via CDN): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [PaperCSS](https://www.getpapercss.com/)
+- **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [qrcode-generator](https://github.com/nicolo-ribaudo/qrcodegen) v1.4.4, [PaperCSS](https://www.getpapercss.com/)
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)
 

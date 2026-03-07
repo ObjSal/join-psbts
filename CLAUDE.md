@@ -4,7 +4,8 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
+- **`sign.html`** — Browser-based PSBT signer for hot/paper wallets. Accepts PSBT via file upload, QR scan (BBQr), or paste (hex/base64). Signs with WIF private key using ECPair (supports P2WPKH + P2TR). Outputs signed PSBT as hex, download, or BBQr QR code. Network passed via URL params from sweeper, or auto-detected standalone.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
 - **`tests/test_psbt_builder.py`** — 111 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, and QR code display.
@@ -108,6 +109,21 @@ The "Upload Signed PSBTs" section supports both file upload and camera-based QR 
 - **PSBT list**: `.psbt-list-item` cards show source badge (File/QR), label, byte count, and remove button. Styled like `.utxo-fetched` cards.
 - **Combine handler**: Reads from `psbtAccumulator[]` instead of file input. Clears accumulator after successful finalize.
 - **File input change handler**: Eagerly reads files into accumulator on selection, clears input for re-selection. Existing E2E tests work unchanged since `page.set_input_files()` triggers the change event.
+
+### Hot Wallet Transaction Signer (sign.html)
+Separate page linked from Step 2 of the sweeper. Lets users sign PSBTs in-browser using a WIF private key.
+
+**Link from sweeper**: `updateSignPageLink()` dynamically sets the href with `?network=` and `&serverMode=` params. Called from `detectServer()` and the network `change` handler.
+
+**PSBT loading**: File upload (styled label), QR scan (BBQr multi-part support), or paste textarea (hex/base64). All three methods call `loadPsbtFromBytes(data, label)` which parses with `bitcoin.Psbt.fromBuffer()` and displays info (inputs, outputs, total sats, fee).
+
+**Signing**: `ECPair.fromWIF(wif, network)` + `psbt.signInput(i, keyPair)` with try/catch per input. ECPair provides `signSchnorr` via tiny-secp256k1, so both P2WPKH and P2TR (taproot) inputs are supported. WIF validation shows derived P2WPKH address as feedback, with network mismatch detection.
+
+**Output**: Signed PSBT hex in collapsible `<details>`, download as `.psbt` file, BBQr QR code display (same `renderQrToCanvas` + `splitQRs` pattern as index.html).
+
+**Network**: URL param `?network=` takes priority over auto-detection. Auto-detection matches index.html logic (`/api/health` → regtest, isLocalhost → testnet4, else mainnet). "Back to Sweeper" link preserves network params.
+
+**BigInt**: bitcoinjs-lib v7 uses BigInt for transaction values. Accumulate with `0n`/`BigInt()`, convert to `Number()` only for `toLocaleString()` display.
 
 ### Testnet4 Wallet Credentials
 Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TESTNET4_ADDRESS`) > `settings.json`. For Claude Code, credentials are stored in `.claude/settings.local.json` under the `env` key. The `settings.json` file is in `.gitignore`.

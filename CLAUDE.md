@@ -125,16 +125,16 @@ Configurations are in `.claude/launch.json`.
 
 ## CLI Tools
 
-### `sign-psbt.py` — PSBT Signing
+### `tools/sign-psbt.py` — PSBT Signing
 Signs a PSBT file with a WIF private key. Outputs `<name>-signed.psbt` in the same directory (overwrites if exists). Requires `pip install embit`.
 
 ```bash
-python3 sign-psbt.py <psbt-file> <wif>
+python3 tools/sign-psbt.py <psbt-file> <wif>
 ```
 
 ## Dependencies
 
 - Python 3 + Playwright (`pip install playwright && playwright install chromium`)
-- [embit](https://github.com/nicolo-ribaudo/embit) (`pip install embit`) for `sign-psbt.py`
+- [embit](https://github.com/nicolo-ribaudo/embit) (`pip install embit`) for `tools/sign-psbt.py`
 - Bitcoin Core v30+ (bitcoind + bitcoin-cli) for E2E tests
 - No npm/node required — all JS dependencies loaded via CDN

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sign a PSBT file with a WIF private key.
 
-Usage: python3 sign-psbt.py <psbt-file> <wif>
+Usage: python3 tools/sign-psbt.py <psbt-file> <wif>
 
 Outputs: <psbt-file>-signed.psbt in the same directory.
 Requires: pip install embit

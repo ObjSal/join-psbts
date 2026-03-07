@@ -77,7 +77,6 @@
     .btn-success:hover { background: #27ae60; }
     button.remove { width: 50px; flex: 0 0 50px; background: #fff; border-color: #e74c3c; color: #e74c3c; }
     button.remove:hover { background: #e74c3c; color: #fff; }
-    .sortable-ghost { opacity: 0.4; background: #f0e8d0; }
     .row { display: flex; gap: 0.5rem; width: 100%; }
     .row .grow { flex: 1; }
     #addOutputButton { margin-bottom: 0.8rem; }
@@ -172,8 +171,16 @@
       justify-content: center;
     }
     .script-label { font-size: 0.85rem; color: #666; margin-top: 0.2rem; }
+    [data-output] .row { flex-wrap: nowrap; align-items: flex-start; }
+    [data-output] input { padding: 8px 10px; height: auto; }
+    .output-address { flex: 1 1 0; min-width: 80px; }
+    .wipe-label {
+      display: flex; align-items: center; gap: 2px; width: auto;
+      font-size: 0.85rem; color: #888; flex: 0 0 auto; cursor: pointer; white-space: nowrap;
+      margin: 13px 0 0; padding: 8px 0;
+    }
+    .wipe-label input[type="checkbox"] { width: auto; margin: 0; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 </head>
 <body>
   <h1>&#x20BF; Bitcoin PSBT Builder</h1>
@@ -207,33 +214,22 @@
       <button type="button" id="addInputButton" class="btn-secondary">+ Add Input <span style="color:#999;font-size:0.82rem;font-weight:normal;">(manual entry)</span></button>
     </div>
 
-    <div style="margin-top:1rem;">
-      <h3>Outputs</h3>
-      <div id="outputContainer"></div>
-      <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
-    </div>
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="includeChange" checked>
-      <label for="includeChange" style="margin:0;">Add change output</label>
-    </div>
-
-    <div id="feeRateGroup">
-      <label>Fee Rate (sat/vB)</label>
+    <div id="feeRateGroup" style="margin-top:1rem;">
+      <h3>Fee Rate</h3>
       <div class="fee-presets" id="feePresets">
         <button type="button" class="fee-preset btn-secondary" data-speed="fast">Fast: --</button>
         <button type="button" class="fee-preset btn-secondary" data-speed="medium">Med: --</button>
         <button type="button" class="fee-preset btn-secondary" data-speed="slow">Slow: --</button>
         <button type="button" id="refreshFees" class="btn-secondary" style="font-size:0.85rem;padding:0.3rem 0.5rem;">&#x21bb;</button>
       </div>
-      <input type="number" id="feeRate" placeholder="or enter custom sat/vB">
+      <input type="number" id="feeRate" placeholder="or enter custom sat/vB" style="max-width:280px;">
+      <div id="feeCalc" style="margin-top:0.5rem;color:#888;"></div>
     </div>
 
-    <div id="feeCalc" style="margin-top:0.5rem;color:#888;display:none;"></div>
-
-    <div id="changeAddrGroup">
-      <label>Change Address (must match network)</label>
-      <input type="text" id="changeAddress" placeholder="bc1q... / tb1q...">
+    <div style="margin-top:1rem;">
+      <h3>Outputs</h3>
+      <div id="outputContainer"></div>
+      <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
     </div>
 
     <button id="createPsbt" class="btn-primary" style="margin-top:1rem;">Create & Download PSBT</button>
@@ -535,7 +531,7 @@
         <!-- Row 2 : vout + value -->
         <div class="row" style="margin-top:0.4rem;">
           <input placeholder="vout"  value="${vout}"  style="width:80px;">
-          <input placeholder="value (sats)" value="${value}" style="width:110px;">
+          <input placeholder="sats" value="${value}" style="width:110px;">
         </div>
 
         <!-- scriptPubKey + decoded label -->
@@ -706,28 +702,107 @@
 
       div.innerHTML = `
         <div class="row">
-          <input class="grow output-address" placeholder="address" value="${address}">
-          <input placeholder="value (sats)" value="${value}" style="width:110px;">
-          <button type="button" class="remove" onclick="this.closest('[data-output]').remove(); updateFeeCalc();">✕</button>
+          <input class="output-address" placeholder="address" value="${address}">
+          <div style="display:flex;flex-direction:column">
+            <input class="output-value" placeholder="sats" value="${value}" style="width:110px;" type="number">
+            <small class="output-pct" style="text-align:right;color:#888;font-size:0.75rem"></small>
+          </div>
+          <label class="wipe-label"><input type="checkbox" class="output-wipe"> Wipe</label>
+          <button type="button" class="remove">✕</button>
         </div>
       `;
 
       document.getElementById('outputContainer').appendChild(div);
 
       const addrInput = div.querySelector('.output-address');
-      // const validate  = () => {
-      //   const net = getSelectedNetwork();
-      //   colourField(addrInput, isValid);
-      // };
+      const valInput  = div.querySelector('.output-value');
+      const wipeChk   = div.querySelector('.output-wipe');
+      const removeBtn = div.querySelector('.remove');
+
       addrInput.addEventListener('input', () => {
         const net     = getSelectedNetwork();
         const isValid = validateBitcoinAddress(addrInput.value.trim(), net);
-        colourField(addrInput, isValid);      // << no undefined variable
+        colourField(addrInput, isValid);
       });
 
-      // validate();
-      updateFeeCalc();   // keep fee in sync
+      valInput.addEventListener('input', () => { updateOutputPercentages(); });
+      wipeChk.addEventListener('change', () => { handleWipeToggle(div); });
+      removeBtn.addEventListener('click', () => { div.remove(); updateOutputPercentages(); });
 
+      updateOutputPercentages();
+    }
+
+    // ── output percentage / wipe helpers ─────────────────────────
+
+    function getAvailableSats() {
+      const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
+        .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
+      const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
+      if (!feeRateSat || totalIn === 0) return totalIn;
+      const nIn  = document.querySelectorAll('[data-utxo]').length;
+      const nOut = Math.max(1, document.querySelectorAll('[data-output]').length);
+      const roughVsize = Math.ceil(10.5 + 68 * nIn + 31 * nOut);
+      const estFee = Math.ceil(feeRateSat * roughVsize);
+      return Math.max(0, totalIn - estFee);
+    }
+
+    function gatherOutputs() {
+      return Array.from(document.querySelectorAll('#outputContainer [data-output]')).map(r => {
+        const addr = r.querySelector('.output-address').value.trim();
+        const val  = parseInt(r.querySelector('.output-value').value) || 0;
+        return { address: addr, value: val };
+      }).filter(o => o.address && o.value > 0);
+    }
+
+    function updateOutputPercentages() {
+      recalcWipeOutput();
+      const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
+        .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
+      document.querySelectorAll('#outputContainer [data-output]').forEach(row => {
+        const pctLabel = row.querySelector('.output-pct');
+        const sats = parseInt(row.querySelector('.output-value').value) || 0;
+        pctLabel.textContent = (totalIn > 0 && sats > 0) ? (sats / totalIn * 100).toFixed(2) + '%' : '';
+      });
+      updateFeeCalc();
+    }
+
+    function handleWipeToggle(row) {
+      const wipeChk  = row.querySelector('.output-wipe');
+      const valInput = row.querySelector('.output-value');
+      if (wipeChk.checked) {
+        // Enforce single wipe
+        document.querySelectorAll('#outputContainer [data-output]').forEach(r => {
+          if (r !== row) {
+            const w = r.querySelector('.output-wipe');
+            if (w.checked) {
+              w.checked = false;
+              r.querySelector('.output-value').placeholder = 'sats';
+              r.querySelector('.output-value').disabled = false;
+            }
+          }
+        });
+        valInput.value = '';
+        valInput.placeholder = '(wipe)';
+        valInput.disabled = true;
+      } else {
+        valInput.placeholder = 'sats';
+        valInput.disabled = false;
+      }
+      updateOutputPercentages();
+    }
+
+    function recalcWipeOutput() {
+      const wipeChk = document.querySelector('#outputContainer [data-output] .output-wipe:checked');
+      if (!wipeChk) return;
+      const row = wipeChk.closest('[data-output]');
+      const available = getAvailableSats();
+      let otherSum = 0;
+      document.querySelectorAll('#outputContainer [data-output]').forEach(r => {
+        if (r === row) return;
+        otherSum += parseInt(r.querySelector('.output-value').value) || 0;
+      });
+      const wipeValue = Math.max(0, available - otherSum);
+      row.querySelector('.output-value').value = wipeValue;
     }
 
     function colourField(el, isValid) {
@@ -764,7 +839,6 @@
       document.querySelectorAll('.script-input').forEach(input =>
         input.dispatchEvent(new Event('input'))
       );
-      validateChangeAddr();      // <‑‑ add this line
     }
 
     function estimateVirtualSize(psbt) {
@@ -837,25 +911,9 @@
         totalOutput += o.value;
       }
 
-      // ---------------- change logic ----------------
-      const wantsChange = changeAddress && changeAddress.trim() !== '';
-
-      if (wantsChange) {
-        // unchanged
-        const changeValue = totalInput - totalOutput - fee;
-        if (changeValue < 0)
-          throw new Error('Outputs + fee exceed total input!');
-        if (changeValue > 0) {
-          psbt.addOutput({ address: changeAddress, value: BigInt(changeValue) });
-        }
-      } else {
-        // no change output; fee = totalInput − totalOutput
-        const delta = totalInput - totalOutput;
-        if (delta < 0)
-          throw new Error('Outputs exceed total input (no change addr).');
-        // delta > 0 is allowed and becomes the tx fee
-      }
-
+      // fee = totalInput - totalOutput (implicit)
+      if (totalOutput > totalInput)
+        throw new Error('Outputs exceed total input!');
 
       return psbt;
     }
@@ -890,43 +948,23 @@
             pubkey: pubkeyInput ? pubkeyInput.value.trim() : '',
           };
         });
-        const outputs = Array.from(document.querySelectorAll('#outputContainer [data-output]')).map(row => {
-          const [addressInput, valueInput] = row.querySelectorAll('input');
-          return {
-            address: addressInput.value.trim(),
-            value: parseInt(valueInput.value),
-          };
-        });
+        const feeRateVal = parseFloat(document.getElementById('feeRate').value);
+        if (!feeRateVal || feeRateVal <= 0) return alert('Enter a fee rate.');
 
-        const useChange   = includeChange.checked;
-        const feeRate     = parseFloat(document.getElementById('feeRate').value);
-        const changeAddr  = document.getElementById('changeAddress').value.trim();
-        const net         = getSelectedNetwork();
+        recalcWipeOutput();
+        const outputs = gatherOutputs();
+        if (!outputs.length) return alert('Add at least one output with address and value.');
 
-        // Basic validations ----------------------------------
-        if (useChange) {
-          if (!feeRate || feeRate <= 0)       return alert('Enter a fee‑rate.');
-          if (!validateBitcoinAddress(changeAddr, net))
-            return alert('Invalid change address.');
-        }
+        const net = getSelectedNetwork();
 
-        // Build PSBT -----------------------------------------
-        let psbt, fee;
-        if (useChange) {
-          // size‑based fee
-          const tmp   = createPsbtFromInputs(utxos, outputs, 0, changeAddr);
-          const vsize = estimateVirtualSize(tmp);
-          fee         = Math.ceil(feeRate * vsize);
-          psbt        = createPsbtFromInputs(utxos, outputs, fee, changeAddr);
-        } else {
-          // fee = inputs – outputs, no change output
-          const totalIn  = utxos.reduce((s,u)=>s+u.value, 0);
-          const totalOut = outputs.reduce((s,o)=>s+o.value, 0);
-          fee            = totalIn - totalOut;
-          if (fee < 0) return alert('Outputs exceed inputs!');
-          psbt           = createPsbtFromInputs(utxos, outputs, 0, ''); // no change addr
-          feeCalc.textContent = `Transaction fee: ${fee} sats`;
-        }
+        // Validate output totals
+        const totalIn  = utxos.reduce((s, u) => s + u.value, 0);
+        const totalOut = outputs.reduce((s, o) => s + o.value, 0);
+        const fee = totalIn - totalOut;
+        if (fee < 0) return alert('Outputs exceed inputs! Reduce output amounts.');
+
+        const psbt = createPsbtFromInputs(utxos, outputs, 0, '');
+        document.getElementById('feeCalc').textContent = `Transaction fee: ${fee} sats`;
 
         downloadPsbt(psbt);
       } catch (e) {
@@ -1025,19 +1063,6 @@
       colourField(fetchAddrInput, validateBitcoinAddress(fetchAddrInput.value.trim(), net));
     });
 
-    // live‑validate change address like output addresses
-    const changeAddrInput = document.getElementById('changeAddress');
-
-    function validateChangeAddr() {
-      const net  = getSelectedNetwork();
-      const ok   = validateBitcoinAddress(changeAddrInput.value.trim(), net);
-      colourField(changeAddrInput, ok);
-    }
-
-    changeAddrInput.addEventListener('input', validateChangeAddr);
-    validateChangeAddr();        // run once at load
-
-
     function updateBroadcastLabel() {
       const net = document.getElementById('network').value;
       const btn = document.getElementById('broadcastTx');
@@ -1066,87 +1091,42 @@
       }
     });
 
-    new Sortable(document.getElementById('utxoContainer'), {
-      animation: 150,
-      handle: null, // you can set to a CSS class if you want a drag handle
-      ghostClass: 'sortable-ghost'
-    });
-
-    new Sortable(document.getElementById('outputContainer'), {
-      animation: 150,
-      handle: null,
-      ghostClass: 'sortable-ghost'
-    });
-    
     function updateFeeCalc() {
-      const useChange  = includeChange.checked;
-      const net        = getSelectedNetwork();
       const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
+      const utxos = document.querySelectorAll('[data-utxo]');
+      const nIn   = utxos.length;
+      const nOut  = Math.max(1, document.querySelectorAll('[data-output]').length);
+      const totalIn = Array.from(utxos).reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
 
-      // gather current inputs / outputs -----------------------
-      const utxos = Array.from(document.querySelectorAll('[data-utxo]')).map(r => {
-        const [txidI, voutI, valI, scriptI] = r.querySelectorAll('input');
-        return { txid:txidI.value, vout:+voutI.value, value:+valI.value, scriptPubKey:scriptI.value };
-      });
-      const outs  = Array.from(document.querySelectorAll('[data-output]')).map(r => {
-        const [addrI, valI] = r.querySelectorAll('input');
-        return { address:addrI.value, value:+valI.value };
-      });
-
-      // -------------------------------------------------------
       let feeText = '';
-      if (useChange) {
-        if (!feeRateSat) {
-          feeText = '(enter fee‑rate to estimate fee)';
-        } else {
-          // build temp PSBT (fee=0) to get vbytes
-          try {
-            const changeAddr = document.getElementById('changeAddress').value.trim();
-            const tmpPsbt    = createPsbtFromInputs(utxos, outs, 0, changeAddr);
-            const vbytes     = estimateVirtualSize(tmpPsbt);
-            const estFee     = Math.ceil(feeRateSat * vbytes);
-            feeText          = `Estimated fee: ${estFee} sats (${vbytes} vB)`;
-          } catch { feeText = '(unable to estimate – check values)'; }
-        }
-      } else {
-        const totalIn  = utxos.reduce((s,u)=>s+u.value, 0);
-        const totalOut = outs .reduce((s,o)=>s+o.value, 0);
-        const fee      = totalIn - totalOut;
-        feeText        = fee >= 0 ? `Transaction fee: ${fee} sats`
-                                  : 'Outputs exceed inputs!';
+      if (totalIn > 0 && feeRateSat > 0) {
+        const roughVsize = Math.ceil(10.5 + 68 * nIn + 31 * nOut);
+        const estFee = Math.ceil(feeRateSat * roughVsize);
+        const available = Math.max(0, totalIn - estFee);
+        const totalOut = Array.from(document.querySelectorAll('#outputContainer [data-output]'))
+          .reduce((s, r) => s + (parseInt(r.querySelector('.output-value').value) || 0), 0);
+        const remaining = Math.max(0, totalIn - totalOut);
+        const remainPct = totalIn > 0 ? (remaining / totalIn * 100).toFixed(2) : '0.00';
+        feeText = `Estimated fee: ${estFee} sats (${roughVsize} vB) | Available: ${remaining} sats (${remainPct}%)`;
+      } else if (totalIn > 0) {
+        feeText = '(enter fee rate to estimate fee)';
       }
 
+      const feeCalc = document.getElementById('feeCalc');
       feeCalc.textContent = feeText;
       feeCalc.style.display = feeText ? '' : 'none';
     }
     window.updateFeeCalc = updateFeeCalc;   // make it global for inline handlers
 
-    function toggleChangeMode() {
-      const on  = includeChange.checked;
-      feeRateGroup.style.display    = on ? '' : 'none';
-      changeAddrGroup.style.display = on ? '' : 'none';
-      feeCalc.style.display         = on ? 'none' : '';
-      if (on) feeCalc.textContent   = '';          // clear old text
-      updateFeeCalc();
-    }
-    const includeChange   = document.getElementById('includeChange');
-    const feeRateGroup    = document.getElementById('feeRateGroup');
-    const changeAddrGroup = document.getElementById('changeAddrGroup');
-    const feeCalc         = document.getElementById('feeCalc');
-    includeChange.addEventListener('change', toggleChangeMode);
-    toggleChangeMode();          // run once at load
-  
+    const feeCalc = document.getElementById('feeCalc');
+
     document.getElementById('utxoContainer')
-        .addEventListener('input', updateFeeCalc);
-    document.getElementById('outputContainer')
-            .addEventListener('input', updateFeeCalc);
+        .addEventListener('input', () => { updateOutputPercentages(); });
     document.getElementById('feeRate')
-        .addEventListener('input', updateFeeCalc);
-    document.getElementById('changeAddress')
-        .addEventListener('input', updateFeeCalc);
+        .addEventListener('input', () => { updateOutputPercentages(); });
 
-
-
+    // Add one default empty output row
+    addOutput();
 
 
     // Test hook — expose internal functions for automated testing
@@ -1158,7 +1138,9 @@
         fetchFeeRates, rawTxCache,
         colourField, addInput, addFetchedInput, addOutput, updateFeeCalc,
         normalizeExtendedKey, getRelativePath, derivePublicKeyFromXpub,
-        toggleChangeMode, refreshAllScriptLabels, downloadPsbt,
+        refreshAllScriptLabels, downloadPsbt,
+        getAvailableSats, gatherOutputs, updateOutputPercentages,
+        handleWipeToggle, recalcWipeOutput,
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },
       };

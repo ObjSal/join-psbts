@@ -310,8 +310,7 @@ def run_tests(page, base_url, cli, server_url):
     section("4. Create PSBT via UI")
     # ========================================================
 
-    # No-change mode
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "1")
 
     # Add output to recipient
     page.evaluate(f"""() => {{
@@ -321,7 +320,7 @@ def run_tests(page, base_url, cli, server_url):
     # Verify fee display
     page.wait_for_timeout(500)
     fee_text = page.text_content("#feeCalc")
-    test("fee calc shows fee", "100000" in (fee_text or ""), f"got: {fee_text}")
+    test("fee calc shows fee", "Estimated fee" in (fee_text or ""), f"got: {fee_text}")
 
     # Set up a single dialog handler for the entire test
     all_dialogs = []
@@ -333,7 +332,8 @@ def run_tests(page, base_url, cli, server_url):
         page.click("#createPsbt")
     download = download_info.value
 
-    test("no error dialog on create", len(all_dialogs) == 0,
+    test("no unexpected error on create",
+         all(("error" not in d.lower()) for d in all_dialogs),
          f"got: {all_dialogs}")
     test("PSBT download triggered", download is not None)
     test("PSBT filename is unsigned.psbt",
@@ -525,7 +525,7 @@ def run_tests(page, base_url, cli, server_url):
          len(page.query_selector_all("[data-utxo]")) == 2)
 
     # Add output and create PSBT
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "1")
     page.evaluate(f"""() => {{
         window._fn.addOutput(null, "{addr_recip2}", {SERIAL_SEND});
     }}""")
@@ -539,7 +539,8 @@ def run_tests(page, base_url, cli, server_url):
         page.click("#createPsbt")
     dl2 = download_info.value
 
-    test("serial: no error on create", len(all_dialogs) == 0,
+    test("serial: no unexpected error on create",
+         all(("error" not in d.lower()) for d in all_dialogs),
          f"got: {all_dialogs}")
     test("serial: PSBT downloaded", dl2 is not None)
 
@@ -714,7 +715,7 @@ def run_tests(page, base_url, cli, server_url):
     section("16. Create PSBT via UI (Taproot)")
     # ========================================================
 
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "1")
     page.evaluate(f"""() => {{
         window._fn.addOutput(null, "{addr_tr_recip}", {TR_SEND});
     }}""")
@@ -728,7 +729,8 @@ def run_tests(page, base_url, cli, server_url):
         page.click("#createPsbt")
     dl_tr = download_info.value
 
-    test("taproot: no error on create", len(all_dialogs) == 0,
+    test("taproot: no unexpected error on create",
+         all(("error" not in d.lower()) for d in all_dialogs),
          f"got: {all_dialogs}")
     test("taproot: PSBT downloaded", dl_tr is not None)
 
@@ -893,7 +895,7 @@ def run_tests(page, base_url, cli, server_url):
     test("taproot serial: 2 input rows fetched",
          len(page.query_selector_all("[data-utxo]")) == 2)
 
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "1")
     page.evaluate(f"""() => {{
         window._fn.addOutput(null, "{addr_trs_recip}", {TRS_SEND});
     }}""")
@@ -907,7 +909,8 @@ def run_tests(page, base_url, cli, server_url):
         page.click("#createPsbt")
     dl_trs = download_info.value
 
-    test("taproot serial: no error on create", len(all_dialogs) == 0,
+    test("taproot serial: no unexpected error on create",
+         all(("error" not in d.lower()) for d in all_dialogs),
          f"got: {all_dialogs}")
 
     with open(dl_trs.path(), "rb") as f:

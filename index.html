@@ -37,8 +37,20 @@
       margin-top: 0;
       vertical-align: middle;
     }
-    input[type="file"] { border: none; }
-    .psbt-upload { margin-bottom: 1rem; }
+    label.btn-secondary {
+      padding: 0.5rem 1rem;
+      font-family: 'Patrick Hand', cursive;
+      font-size: 1rem;
+      border: 2px solid #999;
+      border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+      box-shadow: 15px 28px 25px -18px rgba(0,0,0,0.2);
+      transition: all 0.2s ease;
+    }
+    label.btn-secondary:hover {
+      background: #f0ebe0;
+      box-shadow: 2px 8px 8px -5px rgba(0,0,0,0.3);
+      transform: translateY(2px);
+    }
     pre {
       background: #f9f5ec;
       padding: 1rem;
@@ -290,8 +302,9 @@
     <p style="color:#888;font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here (via file or QR scan) to combine and finalize.</p>
 
     <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-      <input type="file" id="psbtFiles" multiple class="psbt-upload" style="flex:1; min-width:200px; margin-bottom:0;"/>
-      <button type="button" id="scanQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap;">&#128247; Scan QR Code</button>
+      <label for="psbtFiles" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; cursor:pointer; display:inline-block; text-align:center;">&#128194; Choose Files</label>
+      <input type="file" id="psbtFiles" multiple class="psbt-upload" style="display:none;"/>
+      <button type="button" id="scanQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; margin-top:0; padding-top:0.5rem; padding-bottom:0.5rem;">&#128247; Scan QR Code</button>
     </div>
 
     <div id="qrScannerArea" style="display:none; margin-top:0.8rem;">

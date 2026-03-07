@@ -306,10 +306,12 @@ def fetch_utxos_for_address(page, address, min_utxo_count=1, prev_utxo_count=0):
 
 
 def create_and_download_psbt(page, all_dialogs):
-    """Click Create & Download, return the PSBT binary bytes."""
+    """Click Create PSBT, then Download, return the PSBT binary bytes."""
     all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
     with page.expect_download(timeout=30000) as download_info:
-        page.click("#createPsbt")
+        page.click("#downloadPsbt")
     dl = download_info.value
 
     # Only error alerts are fatal

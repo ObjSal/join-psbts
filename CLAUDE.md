@@ -4,17 +4,20 @@ Single-page web app for building, signing, combining, and broadcasting multi-wal
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1 (all ESM via esm.sh), PaperCSS for styling. Includes a donate button linking to `donate.html`.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 108 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, and output percentage/wipe behavior.
+- **`tests/test_psbt_builder.py`** — 111 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, and QR code display.
 - **`tests/test_regtest_e2e.py`** — 99 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
 ## Key Patterns
 
-### Server Mode Detection
-Frontend checks `/api/health` with 2s timeout on load. If a local server responds, `serverMode=true` and regtest routes through `/api`. On GitHub Pages (no server), regtest option is hidden from the network dropdown.
+### Network Auto-Selection
+On load, the frontend detects the environment and auto-selects the network:
+- **Regtest server** (`/api/health` responds with 2s timeout) → selects regtest, `serverMode=true`
+- **Static server** (localhost but no `/api/health`) → selects testnet4
+- **GitHub Pages** (not localhost) → selects mainnet, removes regtest option from dropdown
 
 ### API Routing
 `getMempoolBaseUrl()` returns `/api` for regtest+serverMode, mempool.space URLs otherwise. The server mirrors mempool.space paths (`/api/address/<addr>/utxo`, `/api/tx/<txid>/hex`, `/api/tx` POST, `/api/v1/fees/recommended`) so frontend fetch calls work identically for all networks.
@@ -64,6 +67,16 @@ When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal fu
 ### Testnet4 Browser Signing
 The testnet4 E2E test signs PSBTs in the browser using ECPair (loaded from `esm.sh/ecpair@3.0.0`). `sign_psbt_in_browser()` uses try/catch per input to skip non-matching inputs, enabling multi-wallet PSBT signing with a single function. Serial signing passes the partially-signed PSBT from key C to key D.
 
+### PSBT QR Code Display (BBQr)
+After creating a PSBT, results are shown in a collapsible area with PSBT hex, Download button, and a Show/Hide QR Code toggle. The QR is rendered using `qrcode-generator@1.4.4` on a 350×350 canvas with fixed 16px pixel margins.
+
+For large PSBTs, `bbqr` (via esm.sh) splits the data into multiple QR parts using the BBQr protocol (Coinkite), natively supported by Coldcard Q. Key settings:
+- `splitQRs(data, 'P', { encoding: 'Z', maxVersion: 20 })` — PSBT type, zlib+base32, max QR version 20
+- `maxVersion: 20` optimized for 350px canvas: 97 modules → ~3.3px/cell → reliable camera scanning
+- Multi-part animation cycles at 250ms per frame with consistent canvas sizing
+- `renderQrToCanvas(qr, canvas, fixedPixels)` uses fixed pixel margins (not cell-based) so the QR pattern boundary stays identical across frames with different module counts
+- `lastPsbt` stores the created PSBT; `hidePsbtResult()` clears stale results when inputs change
+
 ### Testnet4 Wallet Credentials
 Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TESTNET4_ADDRESS`) > `settings.json`. For Claude Code, credentials are stored in `.claude/settings.local.json` under the `env` key. The `settings.json` file is in `.gitignore`.
 
@@ -99,8 +112,18 @@ python3 server/server.py 8000 --regtest
 
 Configurations are in `.claude/launch.json`.
 
+## CLI Tools
+
+### `sign-psbt.py` — PSBT Signing
+Signs a PSBT file with a WIF private key. Outputs `<name>-signed.psbt` in the same directory (overwrites if exists). Requires `pip install embit`.
+
+```bash
+python3 sign-psbt.py <psbt-file> <wif>
+```
+
 ## Dependencies
 
 - Python 3 + Playwright (`pip install playwright && playwright install chromium`)
+- [embit](https://github.com/nicolo-ribaudo/embit) (`pip install embit`) for `sign-psbt.py`
 - Bitcoin Core v30+ (bitcoind + bitcoin-cli) for E2E tests
 - No npm/node required — all JS dependencies loaded via CDN

@@ -232,7 +232,22 @@
       <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
     </div>
 
-    <button id="createPsbt" class="btn-primary" style="margin-top:1rem;">Create & Download PSBT</button>
+    <button id="createPsbt" class="btn-primary" style="margin-top:1rem;">Create PSBT</button>
+
+    <div id="psbtResult" style="display:none; margin-top:1rem;">
+      <details style="margin-bottom:0.5rem;">
+        <summary style="cursor:pointer; color:#888; font-size:0.85rem;">PSBT Hex</summary>
+        <pre id="psbtHex" style="font-size:0.7rem; word-break:break-all; max-height:200px; overflow-y:auto; background:#f5f5f5; padding:0.5rem; border-radius:4px; user-select:all;"></pre>
+      </details>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button id="downloadPsbt" class="btn-secondary">Download PSBT</button>
+        <button id="showQrPsbt" class="btn-secondary">Show QR Code</button>
+      </div>
+      <div id="qrDisplay" style="display:none; text-align:center; margin-top:1rem;">
+        <canvas id="psbtQrCanvas" style="display:block; margin:0 auto;"></canvas>
+        <div id="qrPartInfo" style="color:#888; font-size:0.8rem; margin-top:0.3rem;"></div>
+      </div>
+    </div>
   </div>
 
   <div class="card">
@@ -256,10 +271,12 @@
     This Bitcoin PSBT Builder is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds from transactions created with this tool. Always verify addresses, amounts, and fees before signing and broadcasting.
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <script type="module">
     import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
     window.Buffer = Buffer;
     import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
+    import { splitQRs } from 'https://esm.sh/bbqr';
     import * as ecc from 'https://cdn.jsdelivr.net/npm/@bitcoin-js/tiny-secp256k1-asmjs@2.2.3/+esm';
     bitcoin.initEccLib(ecc);
     import BIP32Factory from 'https://esm.sh/bip32@4.0.0?target=es2022';
@@ -267,9 +284,14 @@
     const bip32 = BIP32Factory(ecc);
     let finalPsbt = null;
     let finalTxHex = null;
+    let lastPsbt = null;
 
-    // Detect local server mode (regtest via server, mainnet/testnet via mempool.space)
+    // Detect local server mode and auto-select network:
+    // - Regtest server (/api/health responds) → regtest
+    // - Static server (localhost, no /api/health) → testnet4
+    // - GitHub Pages (not localhost) → mainnet
     let serverMode = false;
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(location.hostname);
     (async function detectServer() {
       try {
         const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
@@ -277,11 +299,18 @@
         serverMode = data.status === 'ok';
       } catch { serverMode = false; }
 
-      // Hide regtest option if no server (GitHub Pages) — skip in test mode
-      if (!serverMode && !window.__TEST_MODE__) {
+      const networkEl = document.getElementById('network');
+      if (serverMode) {
+        networkEl.value = 'regtest';
+      } else if (isLocalhost) {
+        networkEl.value = 'testnet';
+      } else if (!window.__TEST_MODE__) {
+        // GitHub Pages: hide regtest, select mainnet
         const opt = document.querySelector('#network option[value="regtest"]');
         if (opt) opt.remove();
+        networkEl.value = 'mainnet';
       }
+      networkEl.dispatchEvent(new Event('change'));
       // Update broadcast button label now that serverMode is known
       if (typeof updateBroadcastLabel === 'function') updateBroadcastLabel();
     })();
@@ -927,6 +956,87 @@
       link.click();
     }
 
+    function renderQrToCanvas(qr, canvas, fixedPixels) {
+      const size = qr.getModuleCount();
+      const marginPx = 16; // fixed pixel margin for consistent pattern size
+      const totalPixels = fixedPixels || (size * 4 + 2 * marginPx);
+      const cellSize = (totalPixels - 2 * marginPx) / size;
+      if (canvas.width !== totalPixels || canvas.height !== totalPixels) {
+        canvas.width = totalPixels;
+        canvas.height = totalPixels;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, totalPixels, totalPixels);
+      ctx.fillStyle = '#000000';
+      for (let row = 0; row < size; row++) {
+        for (let col = 0; col < size; col++) {
+          if (qr.isDark(row, col)) {
+            const x = Math.round(marginPx + col * cellSize);
+            const y = Math.round(marginPx + row * cellSize);
+            const w = Math.round(marginPx + (col + 1) * cellSize) - x;
+            const h = Math.round(marginPx + (row + 1) * cellSize) - y;
+            ctx.fillRect(x, y, w, h);
+          }
+        }
+      }
+    }
+
+    function hidePsbtResult() {
+      document.getElementById('psbtResult').style.display = 'none';
+      document.getElementById('showQrPsbt').textContent = 'Show QR Code';
+      if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
+    }
+
+    document.getElementById('downloadPsbt').onclick = () => {
+      if (lastPsbt) downloadPsbt(lastPsbt);
+    };
+
+    document.getElementById('showQrPsbt').onclick = () => {
+      if (!lastPsbt) return;
+      const btn = document.getElementById('showQrPsbt');
+      const qrDiv = document.getElementById('qrDisplay');
+
+      // Toggle: hide if already showing
+      if (qrDiv.style.display !== 'none') {
+        qrDiv.style.display = 'none';
+        if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
+        btn.textContent = 'Show QR Code';
+        return;
+      }
+
+      const raw = lastPsbt.toBuffer();
+      const { parts } = splitQRs(new Uint8Array(raw), 'P', { encoding: 'Z', maxVersion: 20 });
+
+      const qrObjects = parts.map(data => {
+        const qr = qrcode(0, 'L');
+        qr.addData(data);
+        qr.make();
+        return qr;
+      });
+
+      qrDiv.style.display = '';
+      btn.textContent = 'Hide QR Code';
+      if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
+
+      const canvas = document.getElementById('psbtQrCanvas');
+      const info = document.getElementById('qrPartInfo');
+
+      if (parts.length === 1) {
+        renderQrToCanvas(qrObjects[0], canvas, 350);
+        info.textContent = '';
+      } else {
+        let idx = 0;
+        function showNext() {
+          renderQrToCanvas(qrObjects[idx], canvas, 350);
+          info.textContent = `Part ${idx + 1} of ${parts.length}`;
+          idx = (idx + 1) % parts.length;
+        }
+        showNext();
+        window._qrInterval = setInterval(showNext, 250);
+      }
+    };
+
     document.getElementById('createPsbt').onclick = async () => {
       try {
         // Attempt to fetch any missing raw transactions for nonWitnessUtxo
@@ -966,7 +1076,11 @@
         const psbt = createPsbtFromInputs(utxos, outputs, 0, '');
         document.getElementById('feeCalc').textContent = `Transaction fee: ${fee} sats`;
 
-        downloadPsbt(psbt);
+        lastPsbt = psbt;
+        document.getElementById('psbtHex').textContent = Buffer.from(psbt.toBuffer()).toString('hex');
+        document.getElementById('qrDisplay').style.display = 'none';
+        if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
+        document.getElementById('psbtResult').style.display = '';
       } catch (e) {
         alert('Error creating PSBT: ' + e.message);
       }
@@ -1092,6 +1206,7 @@
     });
 
     function updateFeeCalc() {
+      hidePsbtResult();
       const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
       const utxos = document.querySelectorAll('[data-utxo]');
       const nIn   = utxos.length;
@@ -1140,7 +1255,7 @@
         normalizeExtendedKey, getRelativePath, derivePublicKeyFromXpub,
         refreshAllScriptLabels, downloadPsbt,
         getAvailableSats, gatherOutputs, updateOutputPercentages,
-        handleWipeToggle, recalcWipeOutput,
+        handleWipeToggle, recalcWipeOutput, renderQrToCanvas, hidePsbtResult,
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },
       };

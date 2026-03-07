@@ -10,7 +10,7 @@ This tool lets multiple wallet holders collaborate on a single Bitcoin transacti
 
 ### Workflow
 
-1. **Create** -- Add inputs (UTXOs) from multiple wallets, set outputs and fee, then download the unsigned PSBT or display it as a QR code
+1. **Create** -- Add inputs (UTXOs) from multiple wallets by address or xpub, set outputs and fee, then download the unsigned PSBT or display it as a QR code
 2. **Sign** -- Each wallet holder signs the PSBT with their own wallet (hardware wallet, Bitcoin Core, etc.)
 3. **Combine & Finalize** -- Upload all signed PSBTs, the tool merges signatures and produces the raw transaction
 4. **Broadcast** -- Send the finalized transaction to the Bitcoin network via mempool.space
@@ -26,7 +26,7 @@ Both approaches work through the same Combine & Finalize step.
 
 ## Features
 
-- **Fetch UTXOs** by address from mempool.space (or local regtest server), displayed as compact read-only cards
+- **Fetch UTXOs** by address or extended public key (xpub/zpub/vpub/tpub/ypub/upub) from mempool.space (or local regtest server) -- xpub input auto-derives P2WPKH and/or P2TR addresses and scans receive + change chains with BIP44 gap limit
 - **Fee rate presets** pulled live from the network (fast/medium/slow), with estimated fee and available sats display
 - **Output percentage labels** showing each output's share of total input, with a Wipe option to sweep remaining balance
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)

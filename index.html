@@ -239,7 +239,7 @@
       <h3>Inputs (UTXOs)</h3>
       <div id="utxoFetchGroup" style="margin-bottom:1rem;">
         <div class="row">
-          <input class="grow" type="text" id="fetchAddress" placeholder="Enter Bitcoin address to fetch UTXOs">
+          <input class="grow" type="text" id="fetchAddress" placeholder="Enter address or xpub/zpub/vpub to fetch UTXOs">
           <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:160px;flex:0 0 160px;">Fetch & Add UTXOs</button>
         </div>
         <div id="fetchStatus" style="font-size:0.85rem;color:#888;margin-top:0.3rem;"></div>
@@ -645,7 +645,11 @@
       const statusEl = document.getElementById('fetchStatus');
       const net = getSelectedNetwork();
 
-      if (!address) { statusEl.textContent = 'Enter an address first.'; return; }
+      if (!address) { statusEl.textContent = 'Enter an address or extended public key.'; return; }
+
+      // Dispatch: xpub scan vs single-address fetch
+      if (isExtendedKey(address)) { return fetchUtxosFromXpub(address); }
+
       if (!validateBitcoinAddress(address, net)) { statusEl.textContent = 'Invalid address for selected network.'; return; }
 
       statusEl.textContent = 'Fetching UTXOs...';
@@ -692,6 +696,183 @@
         await Promise.allSettled(Array.from(txids).map(txid => fetchRawTx(txid)));
 
         statusEl.textContent = `Added ${utxos.length} UTXO(s) with full transaction data.`;
+        document.getElementById('fetchAddress').value = '';
+        updateFeeCalc();
+        updateOutputPercentages();
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    // Scans one chain (0=receive, 1=change) for one address type using gap limit
+    async function scanXpubAddresses(xpubStr, chain, addrType, network, base, onProgress) {
+      const GAP_LIMIT = 20;
+      const BATCH_SIZE = 5;
+      const BATCH_DELAY = 200; // ms between batches (rate limiting)
+
+      const { key: canonical, isTestnet } = normalizeExtendedKey(xpubStr);
+      const bip32Net = isTestnet ? bitcoin.networks.testnet : bitcoin.networks.bitcoin;
+      const node = bip32.fromBase58(canonical, bip32Net);
+      const chainNode = node.derive(chain);
+
+      const results = [];
+      let consecutiveEmpty = 0;
+      let index = 0;
+
+      while (consecutiveEmpty < GAP_LIMIT) {
+        const batch = [];
+        for (let b = 0; b < BATCH_SIZE; b++) {
+          const child = chainNode.derive(index + b);
+          const pubkey = Buffer.from(child.publicKey);
+          const address = pubkeyToAddress(pubkey, addrType.type, network);
+          batch.push({ address, index: index + b, pubkey });
+        }
+
+        const responses = await Promise.allSettled(
+          batch.map(b =>
+            fetch(`${base}/address/${b.address}/utxo`)
+              .then(r => r.ok ? r.json() : [])
+          )
+        );
+
+        for (let i = 0; i < batch.length; i++) {
+          const utxos = responses[i].status === 'fulfilled' ? responses[i].value : [];
+          if (utxos.length > 0) {
+            consecutiveEmpty = 0;
+            results.push({
+              address: batch[i].address,
+              index: batch[i].index,
+              chain,
+              pubkey: Buffer.from(batch[i].pubkey).toString('hex'),
+              utxos,
+            });
+          } else {
+            consecutiveEmpty++;
+          }
+        }
+        index += BATCH_SIZE;
+
+        if (onProgress) onProgress(index, consecutiveEmpty, results.length);
+
+        if (consecutiveEmpty < GAP_LIMIT) {
+          await new Promise(r => setTimeout(r, BATCH_DELAY));
+        }
+      }
+      return results;
+    }
+
+    // Orchestrates xpub scanning across all address types and chains
+    async function fetchUtxosFromXpub(xpubStr) {
+      const statusEl = document.getElementById('fetchStatus');
+      const net = getSelectedNetwork();
+      const base = getMempoolBaseUrl();
+
+      // Validate xpub network matches selected network
+      const { isTestnet } = normalizeExtendedKey(xpubStr);
+      const isMainnetSelected = (net === bitcoin.networks.bitcoin);
+      if (isTestnet && isMainnetSelected) {
+        statusEl.textContent = 'Testnet extended key but mainnet selected. Switch network.';
+        return;
+      }
+      if (!isTestnet && !isMainnetSelected) {
+        statusEl.textContent = 'Mainnet extended key but testnet/regtest selected. Switch network.';
+        return;
+      }
+
+      // Determine address types from original prefix
+      const versionHex = getOriginalVersionHex(xpubStr);
+      const addressTypes = XPUB_ADDRESS_TYPES.get(versionHex);
+      if (!addressTypes) {
+        statusEl.textContent = 'Unsupported extended key type.';
+        return;
+      }
+
+      statusEl.textContent = 'Scanning addresses...';
+
+      try {
+        // Remove empty input rows before adding fetched UTXOs
+        document.querySelectorAll('#utxoContainer [data-utxo]').forEach(row => {
+          const txid = row.querySelector('input').value.trim();
+          if (!txid) row.remove();
+        });
+
+        // Parse xpub to get depth for building full derivation paths
+        const { key: canonical } = normalizeExtendedKey(xpubStr);
+        const bip32Net = isTestnet ? bitcoin.networks.testnet : bitcoin.networks.bitcoin;
+        const rootNode = bip32.fromBase58(canonical, bip32Net);
+        const xpubDepth = rootNode.depth;
+        const coinType = isTestnet ? 1 : 0;
+
+        let totalUtxoCount = 0;
+        let totalSatsFound = 0;
+        const allTxids = new Set();
+
+        for (const addrType of addressTypes) {
+          for (const chain of [0, 1]) {
+            const chainLabel = chain === 0 ? 'receive' : 'change';
+            statusEl.textContent = `Scanning ${addrType.type} ${chainLabel} addresses...`;
+
+            const found = await scanXpubAddresses(
+              xpubStr, chain, addrType, net, base,
+              (idx, gap, foundCount) => {
+                statusEl.textContent = `Scanning ${addrType.type} ${chainLabel}: checked ${idx} addresses, gap ${gap}/20, ${foundCount} with UTXOs`;
+              }
+            );
+
+            if (found.length > 0) {
+              // Add source label for this type+chain group
+              const chainSats = found.reduce((s, f) => s + f.utxos.reduce((ss, u) => ss + u.value, 0), 0);
+              const chainBtc = (chainSats / 1e8).toFixed(8).replace(/\.?0+$/, '');
+              const chainUtxoCount = found.reduce((s, f) => s + f.utxos.length, 0);
+
+              const label = document.createElement('div');
+              label.className = 'utxo-source-label';
+              const shortXpub = xpubStr.slice(0, 8) + '\u2026' + xpubStr.slice(-6);
+              label.innerHTML = `From: ${shortXpub} (${addrType.type} ${chainLabel}) ` +
+                `<span style="float:right;color:#f7931a;font-weight:bold;">${chainBtc} BTC (${chainUtxoCount} UTXO${chainUtxoCount !== 1 ? 's' : ''})</span>`;
+              document.getElementById('utxoContainer').appendChild(label);
+
+              for (const entry of found) {
+                const scriptPubKey = Buffer.from(
+                  bitcoin.address.toOutputScript(entry.address, net)
+                ).toString('hex');
+
+                // Build best-guess full derivation path for HW wallet info
+                let fullPath;
+                if (xpubDepth === 3) {
+                  // Standard account-level xpub: m/purpose'/coin'/account'/chain/index
+                  fullPath = `m/${addrType.purpose}'/${coinType}'/0'/${chain}/${entry.index}`;
+                } else {
+                  // Non-standard depth — just use relative path
+                  fullPath = `${chain}/${entry.index}`;
+                }
+
+                for (const utxo of entry.utxos) {
+                  addFetchedInput(
+                    utxo.txid, utxo.vout, utxo.value, scriptPubKey, entry.address,
+                    { xpub: xpubStr, path: fullPath, pubkey: entry.pubkey }
+                  );
+                  allTxids.add(utxo.txid);
+                  totalUtxoCount++;
+                  totalSatsFound += utxo.value;
+                }
+              }
+            }
+          }
+        }
+
+        if (totalUtxoCount === 0) {
+          statusEl.textContent = 'No UTXOs found for this extended public key.';
+          return;
+        }
+
+        statusEl.textContent = `Found ${totalUtxoCount} UTXO(s). Fetching full transactions...`;
+
+        // Fetch raw txs for nonWitnessUtxo
+        await Promise.allSettled(Array.from(allTxids).map(txid => fetchRawTx(txid)));
+
+        const totalBtc = (totalSatsFound / 1e8).toFixed(8).replace(/\.?0+$/, '');
+        statusEl.textContent = `Added ${totalUtxoCount} UTXO(s) (${totalBtc} BTC) from xpub scan.`;
         document.getElementById('fetchAddress').value = '';
         updateFeeCalc();
         updateOutputPercentages();
@@ -756,6 +937,24 @@
       '043587cf','044a5262','045f1cf6','024289ef','02575483'
     ]);
 
+    // Maps original SLIP-132 version hex → address types to derive when scanning
+    const XPUB_ADDRESS_TYPES = new Map([
+      // zpub / vpub → P2WPKH only (BIP84)
+      ['04b24746', [{ type: 'p2wpkh', purpose: 84 }]],   // zpub
+      ['045f1cf6', [{ type: 'p2wpkh', purpose: 84 }]],   // vpub
+      // ypub / upub → P2SH-P2WPKH only (BIP49)
+      ['049d7cb2', [{ type: 'p2sh-p2wpkh', purpose: 49 }]],  // ypub
+      ['044a5262', [{ type: 'p2sh-p2wpkh', purpose: 49 }]],  // upub
+      // xpub / tpub → both P2WPKH and P2TR (BIP84 + BIP86)
+      ['0488b21e', [{ type: 'p2wpkh', purpose: 84 }, { type: 'p2tr', purpose: 86 }]],  // xpub
+      ['043587cf', [{ type: 'p2wpkh', purpose: 84 }, { type: 'p2tr', purpose: 86 }]],  // tpub
+      // Multi-sig variants — map to single-sig counterparts (limitation: can't derive multi-sig addresses)
+      ['02aa7ed3', [{ type: 'p2wpkh', purpose: 84 }]],   // Zpub
+      ['02575483', [{ type: 'p2wpkh', purpose: 84 }]],   // Vpub
+      ['0295b43f', [{ type: 'p2sh-p2wpkh', purpose: 49 }]],  // Ypub
+      ['024289ef', [{ type: 'p2sh-p2wpkh', purpose: 49 }]],  // Upub
+    ]);
+
     function normalizeExtendedKey(key) {
       const decoded = bs58check.decode(key);
       const versionHex = Buffer.from(decoded.slice(0, 4)).toString('hex');
@@ -793,6 +992,38 @@
       return Buffer.from(child.publicKey).toString('hex');
     }
 
+    // Returns the raw 4-byte SLIP-132 version hex before normalization
+    function getOriginalVersionHex(key) {
+      const decoded = bs58check.decode(key);
+      return Buffer.from(decoded.slice(0, 4)).toString('hex');
+    }
+
+    // Converts a compressed public key (Buffer) to a Bitcoin address
+    function pubkeyToAddress(pubkey, type, network) {
+      if (type === 'p2wpkh') {
+        const hash = bitcoin.crypto.hash160(pubkey);
+        return bitcoin.address.toBech32(hash, 0, network.bech32);
+      }
+      if (type === 'p2tr') {
+        // BIP341 taproot: tweak x-only key for key-path-only spending
+        const xOnly = pubkey.slice(1); // strip 02/03 prefix → 32-byte x-only key
+        const tweakHash = bitcoin.crypto.taggedHash('TapTweak', Buffer.from(xOnly));
+        const tweaked = ecc.xOnlyPointAddTweak(xOnly, tweakHash);
+        if (!tweaked) throw new Error('Taproot tweak failed');
+        return bitcoin.address.toBech32(Buffer.from(tweaked.xOnlyPubkey), 1, network.bech32);
+      }
+      if (type === 'p2sh-p2wpkh') {
+        const p2wpkh = bitcoin.payments.p2wpkh({ pubkey, network });
+        return bitcoin.payments.p2sh({ redeem: p2wpkh, network }).address;
+      }
+      throw new Error(`Unknown address type: ${type}`);
+    }
+
+    // Returns true if the input is a valid extended public key
+    function isExtendedKey(input) {
+      try { normalizeExtendedKey(input); return true; }
+      catch { return false; }
+    }
 
 
     function addInput(_, txid = '', vout = '', value = '', scriptPubKey = '') {
@@ -900,7 +1131,7 @@
 
 
 
-    function addFetchedInput(txid, vout, value, scriptPubKey, address) {
+    function addFetchedInput(txid, vout, value, scriptPubKey, address, hwInfo = null) {
       const div = document.createElement('div');
       div.setAttribute('data-utxo', '');
       div.className = 'utxo-fetched';
@@ -945,15 +1176,25 @@
 
       const toggle = div.querySelector('.hw-toggle');
       const hwFields = div.querySelector('.hw-fields');
-      toggle.addEventListener('click', () => {
-        const open = hwFields.classList.toggle('open');
-        toggle.textContent = open ? 'HW wallet info \u25be' : 'HW wallet info \u25b8';
-      });
-
-      // Auto-derive pubkey from xpub + path
+      // Pre-populate HW wallet fields when provided by xpub scan
       const xpubInput = div.querySelector('.hw-xpub');
       const pathInput = div.querySelector('.hw-path');
       const pubkeyInput = div.querySelector('.hw-pubkey');
+      const hwPrefix = hwInfo ? '\u2714\uFE0F ' : '';
+      if (hwInfo) {
+        xpubInput.value = hwInfo.xpub;
+        pathInput.value = hwInfo.path;
+        pubkeyInput.value = hwInfo.pubkey;
+        pubkeyInput.readOnly = true;
+        toggle.textContent = hwPrefix + 'HW wallet info \u25b8';
+      }
+
+      toggle.addEventListener('click', () => {
+        const open = hwFields.classList.toggle('open');
+        toggle.textContent = hwPrefix + (open ? 'HW wallet info \u25be' : 'HW wallet info \u25b8');
+      });
+
+      // Auto-derive pubkey from xpub + path
       function tryDerivePubkey() {
         const xpub = xpubInput.value.trim();
         const path = pathInput.value.trim();
@@ -1450,8 +1691,11 @@
     // Live-validate the fetch address input
     const fetchAddrInput = document.getElementById('fetchAddress');
     fetchAddrInput.addEventListener('input', () => {
+      const val = fetchAddrInput.value.trim();
+      if (!val) { colourField(fetchAddrInput, false); return; }
       const net = getSelectedNetwork();
-      colourField(fetchAddrInput, validateBitcoinAddress(fetchAddrInput.value.trim(), net));
+      const valid = validateBitcoinAddress(val, net) || isExtendedKey(val);
+      colourField(fetchAddrInput, valid);
     });
 
     function updateBroadcastLabel() {
@@ -1532,6 +1776,9 @@
         fetchFeeRates, rawTxCache,
         colourField, addInput, addFetchedInput, addOutput, updateFeeCalc,
         normalizeExtendedKey, getRelativePath, derivePublicKeyFromXpub,
+        isExtendedKey, getOriginalVersionHex, pubkeyToAddress,
+        scanXpubAddresses, fetchUtxosFromXpub,
+        get XPUB_ADDRESS_TYPES() { return XPUB_ADDRESS_TYPES; },
         refreshAllScriptLabels, downloadPsbt,
         getAvailableSats, gatherOutputs, updateOutputPercentages,
         handleWipeToggle, recalcWipeOutput, renderQrToCanvas, hidePsbtResult,

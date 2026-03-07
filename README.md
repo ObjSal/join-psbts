@@ -1,6 +1,6 @@
-# Bitcoin PSBT Builder
+# Bitcoin Address Sweeper
 
-Build, sign, and broadcast multi-wallet Bitcoin transactions using PSBTs ([BIP 174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)).
+Sweep Bitcoin addresses across hardware wallets, hot wallets, and paper wallets into a single transaction using PSBTs ([BIP 174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)).
 
 **[Live Demo](https://objsal.github.io/join-psbts/)**
 

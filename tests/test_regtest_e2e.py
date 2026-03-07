@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end regtest test for Bitcoin PSBT Builder.
+End-to-end regtest test for Bitcoin Address Sweeper.
 
 Creates an isolated bitcoind regtest instance via server/server.py,
 funds two wallets, builds a multi-input PSBT through the web UI,

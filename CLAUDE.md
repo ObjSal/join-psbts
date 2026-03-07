@@ -1,6 +1,6 @@
-# Bitcoin PSBT Builder
+# Bitcoin Address Sweeper
 
-Single-page web app for building, signing, combining, and broadcasting multi-wallet Bitcoin PSBTs (BIP 174).
+Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot wallets, and paper wallets into a single transaction using PSBTs (BIP 174).
 
 ## Architecture
 

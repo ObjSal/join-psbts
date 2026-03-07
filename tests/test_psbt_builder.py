@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Playwright test suite for Bitcoin PSBT Builder.
+Playwright test suite for Bitcoin Address Sweeper.
 
 Tests all pure functions via page.evaluate() and DOM interactions
 via Playwright actions. Runs against the real index.html in a browser.

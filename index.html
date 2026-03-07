@@ -262,6 +262,7 @@
 
     <div style="margin-top:1rem;">
       <h3>Outputs</h3>
+      <p style="color:#888;font-size:0.85rem;margin-top:0;">Gifting Bitcoin? Create a <a href="https://objsal.github.io/bitcoin-gift-paper-wallet/" target="_blank" style="color:#f7931a;">Gift Paper Wallet</a></p>
       <div id="outputContainer"></div>
       <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
     </div>
@@ -693,6 +694,7 @@
         statusEl.textContent = `Added ${utxos.length} UTXO(s) with full transaction data.`;
         document.getElementById('fetchAddress').value = '';
         updateFeeCalc();
+        updateOutputPercentages();
       } catch (err) {
         statusEl.textContent = 'Error: ' + err.message;
       }
@@ -1515,8 +1517,10 @@
     document.getElementById('feeRate')
         .addEventListener('input', () => { updateOutputPercentages(); });
 
-    // Add one default empty output row
+    // Add one default empty output row with Wipe enabled
     addOutput();
+    const defaultWipe = document.querySelector('#outputContainer [data-output] .output-wipe');
+    if (defaultWipe) { defaultWipe.checked = true; handleWipeToggle(defaultWipe.closest('[data-output]')); }
 
 
     // Test hook — expose internal functions for automated testing

@@ -156,6 +156,40 @@
       white-space: nowrap;
     }
     .utxo-fetched .hw-toggle { margin-top: 0.15rem; }
+    /* PSBT list items (signed PSBTs ready to combine) */
+    .psbt-list-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #f9f5ec;
+      border: 2px solid #e0d8c0;
+      border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+      padding: 0.4rem 0.7rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.85rem;
+    }
+    .psbt-list-item .psbt-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      color: #777;
+    }
+    .psbt-list-item .psbt-source {
+      color: #f7931a;
+      font-weight: bold;
+      white-space: nowrap;
+      font-size: 0.82rem;
+    }
+    .psbt-list-item .remove {
+      width: 28px;
+      flex: 0 0 28px;
+      padding: 0.15rem;
+      font-size: 0.8rem;
+      margin-top: 0;
+    }
     .subtitle {
       text-align: center;
       color: #888;
@@ -241,7 +275,7 @@
       </details>
       <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
         <button id="downloadPsbt" class="btn-secondary">Download PSBT</button>
-        <button id="showQrPsbt" class="btn-secondary">Show QR Code</button>
+        <button id="showQrPsbt" class="btn-secondary">Show QR Code (Air-gap signing)</button>
       </div>
       <div id="qrDisplay" style="display:none; text-align:center; margin-top:1rem;">
         <canvas id="psbtQrCanvas" style="display:block; margin:0 auto;"></canvas>
@@ -252,9 +286,33 @@
 
   <div class="card">
     <h2>2. Upload Signed PSBTs</h2>
-    <p style="color:#888;font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here to combine and finalize.</p>
-    <input type="file" id="psbtFiles" multiple class="psbt-upload"/>
-    <button id="combinePsbt" class="btn-primary">Combine & Finalize</button>
+    <p style="color:#888;font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here (via file or QR scan) to combine and finalize.</p>
+
+    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+      <input type="file" id="psbtFiles" multiple class="psbt-upload" style="flex:1; min-width:200px; margin-bottom:0;"/>
+      <button type="button" id="scanQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap;">&#128247; Scan QR Code</button>
+    </div>
+
+    <div id="qrScannerArea" style="display:none; margin-top:0.8rem;">
+      <div style="position:relative; max-width:350px; margin:0 auto; border:3px solid #f7931a; border-radius:8px; overflow:hidden;">
+        <video id="qrVideo" autoplay playsinline muted style="width:100%; display:block;"></video>
+        <canvas id="qrScanCanvas" style="display:none;"></canvas>
+      </div>
+      <div id="qrScanProgress" style="text-align:center; color:#888; font-size:0.85rem; margin-top:0.4rem;"></div>
+      <div id="qrProgressBarContainer" style="display:none; max-width:350px; margin:0.4rem auto 0; background:#e0d8c0; border-radius:4px; height:8px; overflow:hidden;">
+        <div id="qrProgressBar" style="height:100%; background:#f7931a; width:0%; transition:width 0.3s;"></div>
+      </div>
+      <div style="text-align:center; margin-top:0.5rem;">
+        <button type="button" id="cancelScanBtn" class="btn-secondary" style="width:auto;">Cancel Scan</button>
+      </div>
+    </div>
+
+    <div id="psbtListContainer" style="display:none; margin-top:0.8rem;">
+      <div style="font-size:0.85rem; color:#666; margin-bottom:0.3rem;">Signed PSBTs ready to combine:</div>
+      <div id="psbtList"></div>
+    </div>
+
+    <button id="combinePsbt" class="btn-primary" style="margin-top:0.8rem;">Combine & Finalize</button>
     <pre id="combinedResult"></pre>
   </div>
 
@@ -276,7 +334,8 @@
     import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
     window.Buffer = Buffer;
     import * as bitcoin from 'https://esm.sh/bitcoinjs-lib@7.0.0-rc.0';
-    import { splitQRs } from 'https://esm.sh/bbqr';
+    import { splitQRs, joinQRs } from 'https://esm.sh/bbqr';
+    import jsQR from 'https://esm.sh/jsqr';
     import * as ecc from 'https://cdn.jsdelivr.net/npm/@bitcoin-js/tiny-secp256k1-asmjs@2.2.3/+esm';
     bitcoin.initEccLib(ecc);
     import BIP32Factory from 'https://esm.sh/bip32@4.0.0?target=es2022';
@@ -285,6 +344,195 @@
     let finalPsbt = null;
     let finalTxHex = null;
     let lastPsbt = null;
+
+    // PSBT accumulator for combining file-uploaded and QR-scanned PSBTs
+    const psbtAccumulator = [];  // Array of { label: string, source: 'file'|'qr', data: Uint8Array }
+    let scannerStream = null;
+    let scannerAnimFrame = null;
+    let bbqrParts = [];
+
+    function addPsbtToList(label, source, data) {
+      psbtAccumulator.push({ label, source, data });
+      renderPsbtList();
+    }
+
+    function removePsbtFromList(index) {
+      psbtAccumulator.splice(index, 1);
+      renderPsbtList();
+    }
+
+    function renderPsbtList() {
+      const container = document.getElementById('psbtListContainer');
+      const list = document.getElementById('psbtList');
+      list.innerHTML = '';
+      if (psbtAccumulator.length === 0) {
+        container.style.display = 'none';
+        return;
+      }
+      container.style.display = '';
+      psbtAccumulator.forEach((item, idx) => {
+        const row = document.createElement('div');
+        row.className = 'psbt-list-item';
+        const sourceSpan = document.createElement('span');
+        sourceSpan.className = 'psbt-source';
+        sourceSpan.textContent = item.source === 'qr' ? 'QR' : 'File';
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'psbt-label';
+        labelSpan.textContent = item.label;
+        const sizeSpan = document.createElement('span');
+        sizeSpan.style.cssText = 'color:#999; white-space:nowrap; font-size:0.82rem;';
+        sizeSpan.textContent = `${item.data.length} bytes`;
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove';
+        removeBtn.textContent = '\u00d7';
+        removeBtn.onclick = () => removePsbtFromList(idx);
+        row.append(sourceSpan, labelSpan, sizeSpan, removeBtn);
+        list.appendChild(row);
+      });
+    }
+
+    // Camera scanner functions
+    async function startQrScanner() {
+      const area = document.getElementById('qrScannerArea');
+      const video = document.getElementById('qrVideo');
+      const progress = document.getElementById('qrScanProgress');
+      bbqrParts = [];
+      document.getElementById('qrProgressBarContainer').style.display = 'none';
+      document.getElementById('qrProgressBar').style.width = '0%';
+      progress.textContent = 'Starting camera...';
+      try {
+        scannerStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = scannerStream;
+        await video.play();
+        area.style.display = '';
+        progress.textContent = 'Point camera at QR code...';
+        scanFrame();
+      } catch (err) {
+        progress.textContent = '';
+        area.style.display = 'none';
+        alert('Camera access denied or unavailable: ' + err.message);
+      }
+    }
+
+    function stopQrScanner() {
+      if (scannerAnimFrame) {
+        cancelAnimationFrame(scannerAnimFrame);
+        scannerAnimFrame = null;
+      }
+      if (scannerStream) {
+        scannerStream.getTracks().forEach(t => t.stop());
+        scannerStream = null;
+      }
+      const video = document.getElementById('qrVideo');
+      video.srcObject = null;
+      document.getElementById('qrScannerArea').style.display = 'none';
+      document.getElementById('scanQrBtn').textContent = '\u{1F4F7} Scan QR Code';
+      bbqrParts = [];
+    }
+
+    function scanFrame() {
+      try {
+        const video = document.getElementById('qrVideo');
+        const canvas = document.getElementById('qrScanCanvas');
+        if (!scannerStream || video.readyState < video.HAVE_ENOUGH_DATA) {
+          scannerAnimFrame = requestAnimationFrame(scanFrame);
+          return;
+        }
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert'
+        });
+        if (code && code.data) {
+          handleScannedQR(code.data);
+        }
+      } catch (err) {
+        console.error('QR scan error:', err);
+      }
+      if (scannerStream) {
+        scannerAnimFrame = requestAnimationFrame(scanFrame);
+      }
+    }
+
+    function handleScannedQR(data) {
+      // BBQr frame
+      if (data.startsWith('B$')) {
+        handleBBQrPart(data);
+        return;
+      }
+      // Try base64-encoded PSBT
+      try {
+        const decoded = Buffer.from(data, 'base64');
+        if (decoded.length >= 5 &&
+            decoded[0] === 0x70 && decoded[1] === 0x73 &&
+            decoded[2] === 0x62 && decoded[3] === 0x74 &&
+            decoded[4] === 0xff) {
+          document.getElementById('qrScanProgress').textContent = 'PSBT scanned successfully!';
+          addPsbtToList('QR scan (base64)', 'qr', new Uint8Array(decoded));
+          stopQrScanner();
+          return;
+        }
+      } catch (e) { /* not base64 */ }
+      // Try hex-encoded PSBT
+      try {
+        if (/^[0-9a-fA-F]+$/.test(data) && data.length % 2 === 0) {
+          const decoded = Buffer.from(data, 'hex');
+          if (decoded.length >= 5 &&
+              decoded[0] === 0x70 && decoded[1] === 0x73 &&
+              decoded[2] === 0x62 && decoded[3] === 0x74 &&
+              decoded[4] === 0xff) {
+            document.getElementById('qrScanProgress').textContent = 'PSBT scanned successfully!';
+            addPsbtToList('QR scan (hex)', 'qr', new Uint8Array(decoded));
+            stopQrScanner();
+            return;
+          }
+        }
+      } catch (e) { /* not hex */ }
+      // QR detected but not a PSBT — show feedback and keep scanning
+      document.getElementById('qrScanProgress').textContent = 'QR detected — not a PSBT. Keep scanning...';
+    }
+
+    function handleBBQrPart(data) {
+      const progress = document.getElementById('qrScanProgress');
+      const barContainer = document.getElementById('qrProgressBarContainer');
+      const bar = document.getElementById('qrProgressBar');
+      const totalParts = parseInt(data.substring(4, 6), 36);
+      const partNum = parseInt(data.substring(6, 8), 36);
+      const existingPartNums = new Set(
+        bbqrParts.map(p => parseInt(p.substring(6, 8), 36))
+      );
+      if (!existingPartNums.has(partNum)) {
+        bbqrParts.push(data);
+      }
+      const scannedCount = bbqrParts.length;
+      barContainer.style.display = '';
+      bar.style.width = `${(scannedCount / totalParts) * 100}%`;
+      progress.textContent = `Scanned ${scannedCount} of ${totalParts} parts`;
+      if (scannedCount === totalParts) {
+        try {
+          const result = joinQRs(bbqrParts);
+          const raw = result.raw instanceof Uint8Array
+            ? result.raw
+            : new Uint8Array(result.raw);
+          const fileType = result.fileType;
+          const label = fileType === 'P'
+            ? `BBQr scan (${totalParts} parts, PSBT)`
+            : `BBQr scan (${totalParts} parts, type=${fileType})`;
+          progress.textContent = 'BBQr scan complete!';
+          addPsbtToList(label, 'qr', raw);
+          stopQrScanner();
+        } catch (err) {
+          progress.textContent = `BBQr decode error: ${err.message}. Retrying...`;
+          bbqrParts = [];
+          bar.style.width = '0%';
+        }
+      }
+    }
 
     // Detect local server mode and auto-select network:
     // - Regtest server (/api/health responds) → regtest
@@ -984,7 +1232,7 @@
 
     function hidePsbtResult() {
       document.getElementById('psbtResult').style.display = 'none';
-      document.getElementById('showQrPsbt').textContent = 'Show QR Code';
+      document.getElementById('showQrPsbt').textContent = 'Show QR Code (Air-gap signing)';
       if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
     }
 
@@ -1001,7 +1249,7 @@
       if (qrDiv.style.display !== 'none') {
         qrDiv.style.display = 'none';
         if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
-        btn.textContent = 'Show QR Code';
+        btn.textContent = 'Show QR Code (Air-gap signing)';
         return;
       }
 
@@ -1087,16 +1335,41 @@
     };
 
 
+    // File input: add to accumulator on selection
+    document.getElementById('psbtFiles').addEventListener('change', async (e) => {
+      const files = e.target.files;
+      for (const file of files) {
+        const buffer = await file.arrayBuffer();
+        addPsbtToList(file.name, 'file', new Uint8Array(buffer));
+      }
+      e.target.value = '';
+    });
+
+    // QR scanner buttons
+    document.getElementById('scanQrBtn').addEventListener('click', () => {
+      if (scannerStream) {
+        stopQrScanner();
+      } else {
+        startQrScanner();
+      }
+    });
+    document.getElementById('cancelScanBtn').addEventListener('click', stopQrScanner);
+
+    // Combine & Finalize: read from accumulator
     document.getElementById('combinePsbt').onclick = async () => {
-      const files = document.getElementById('psbtFiles').files;
-      if (!files.length) return alert("Please upload PSBT files");
+      if (psbtAccumulator.length === 0) {
+        return alert("Please upload PSBT files or scan QR codes first");
+      }
 
       const psbtArray = [];
       const network = getSelectedNetwork();
-      for (const file of files) {
-        const buffer = await file.arrayBuffer();
-        const psbt = bitcoin.Psbt.fromBuffer(new Uint8Array(buffer), { network });
-        psbtArray.push(psbt);
+      try {
+        for (const item of psbtAccumulator) {
+          const psbt = bitcoin.Psbt.fromBuffer(item.data, { network });
+          psbtArray.push(psbt);
+        }
+      } catch (e) {
+        return alert("Error parsing PSBT: " + e.message);
       }
 
       try {
@@ -1109,6 +1382,8 @@
         finalPsbt = combined;
         finalTxHex = combined.extractTransaction().toHex();
         document.getElementById('combinedResult').innerText = finalTxHex;
+        psbtAccumulator.length = 0;
+        renderPsbtList();
       } catch (e) {
         alert("Error combining/finalizing PSBTs: " + e.message);
       }
@@ -1256,6 +1531,10 @@
         refreshAllScriptLabels, downloadPsbt,
         getAvailableSats, gatherOutputs, updateOutputPercentages,
         handleWipeToggle, recalcWipeOutput, renderQrToCanvas, hidePsbtResult,
+        addPsbtToList, removePsbtFromList, renderPsbtList,
+        handleScannedQR, handleBBQrPart,
+        startQrScanner, stopQrScanner,
+        get psbtAccumulator() { return psbtAccumulator; },
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },
       };

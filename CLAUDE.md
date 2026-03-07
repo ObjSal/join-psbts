@@ -4,7 +4,7 @@ Single-page web app for building, signing, combining, and broadcasting multi-wal
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
 - **`tests/test_psbt_builder.py`** — 111 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, and QR code display.
@@ -76,6 +76,17 @@ For large PSBTs, `bbqr` (via esm.sh) splits the data into multiple QR parts usin
 - Multi-part animation cycles at 250ms per frame with consistent canvas sizing
 - `renderQrToCanvas(qr, canvas, fixedPixels)` uses fixed pixel margins (not cell-based) so the QR pattern boundary stays identical across frames with different module counts
 - `lastPsbt` stores the created PSBT; `hidePsbtResult()` clears stale results when inputs change
+
+### QR Code Scanning (Upload Signed PSBTs)
+The "Upload Signed PSBTs" section supports both file upload and camera-based QR scanning. A PSBT accumulator array collects PSBTs from both sources into a unified visual list.
+
+- **Camera**: `getUserMedia({ facingMode: 'environment' })` opens rear camera in a 350px video element with orange border
+- **Scan loop**: `requestAnimationFrame` → draw video to hidden `#qrScanCanvas` → `jsQR(imageData)` → `handleScannedQR()` (wrapped in try-catch to prevent silent loop death)
+- **Format detection**: BBQr (`B$` prefix) → `handleBBQrPart()` with progress bar; base64 PSBT → check magic bytes `70736274ff`; hex PSBT → regex + magic bytes; non-PSBT → "QR detected — not a PSBT" feedback
+- **BBQr multi-part**: Deduplicates by part number, shows progress bar (`scanned/total`), calls `joinQRs(parts)` when complete
+- **PSBT list**: `.psbt-list-item` cards show source badge (File/QR), label, byte count, and remove button. Styled like `.utxo-fetched` cards.
+- **Combine handler**: Reads from `psbtAccumulator[]` instead of file input. Clears accumulator after successful finalize.
+- **File input change handler**: Eagerly reads files into accumulator on selection, clears input for re-selection. Existing E2E tests work unchanged since `page.set_input_files()` triggers the change event.
 
 ### Testnet4 Wallet Credentials
 Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TESTNET4_ADDRESS`) > `settings.json`. For Claude Code, credentials are stored in `.claude/settings.local.json` under the `env` key. The `settings.json` file is in `.gitignore`.

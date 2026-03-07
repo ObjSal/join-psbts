@@ -312,8 +312,10 @@ def create_and_download_psbt(page, all_dialogs):
         page.click("#createPsbt")
     dl = download_info.value
 
-    if all_dialogs:
-        raise RuntimeError(f"Dialog(s) on create: {all_dialogs}")
+    # Only error alerts are fatal
+    errors = [d for d in all_dialogs if "error" in d.lower()]
+    if errors:
+        raise RuntimeError(f"Error dialog(s) on create: {errors}")
 
     with open(dl.path(), "rb") as f:
         return f.read()
@@ -412,7 +414,7 @@ def recover_funds():
                 preload_ecpair(page)
 
                 fetch_utxos_for_address(page, addr)
-                page.uncheck("#includeChange")
+                page.fill("#feeRate", "2")
                 page.evaluate(f"""() => {{
                     window._fn.addOutput(null, "{main_address}", {sweep_amount});
                 }}""")
@@ -525,18 +527,18 @@ def run_tests(page, base_url, main_wif, main_address):
     test("main wallet UTXOs fetched", utxo_count >= 1,
          f"got {utxo_count} UTXOs")
 
-    # Use change mode: fee rate 2 sat/vB, change back to main
-    page.check("#includeChange")
+    # Fee rate 2 sat/vB, add outputs to all 4 wallets + wipe back to main
     page.fill("#feeRate", "2")
-    page.fill("#changeAddress", main_address)
 
-    # Add outputs to all 4 wallets (A+B parallel, C+D serial)
     page.evaluate(f"""() => {{
         window._fn.addOutput(null, "{wallet_a['address']}", {FUND_A_SATS});
         window._fn.addOutput(null, "{wallet_b['address']}", {FUND_B_SATS});
         window._fn.addOutput(null, "{wallet_c['address']}", {FUND_C_SATS});
         window._fn.addOutput(null, "{wallet_d['address']}", {FUND_D_SATS});
+        window._fn.addOutput(null, "{main_address}", 0);
     }}""")
+    # Enable wipe on the last output (change back to main)
+    page.locator("[data-output]:last-child .output-wipe").check()
 
     page.wait_for_timeout(500)  # let fee calc update
 
@@ -621,7 +623,7 @@ def run_tests(page, base_url, main_wif, main_address):
     section("4. Create Return PSBT via UI")
     # ========================================================
 
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "2")
 
     # Output: return all funds to main wallet (minus fee)
     page.evaluate(f"""() => {{
@@ -713,7 +715,7 @@ def run_tests(page, base_url, main_wif, main_address):
     section("8. Create Serial Return PSBT via UI")
     # ========================================================
 
-    page.uncheck("#includeChange")
+    page.fill("#feeRate", "2")
 
     # Output: return all funds to main wallet (minus fee)
     page.evaluate(f"""() => {{

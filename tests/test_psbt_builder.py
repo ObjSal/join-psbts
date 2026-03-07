@@ -116,6 +116,10 @@ def run_tests(page, base_url):
     page.goto(base_url)
     page.wait_for_function("() => window._fn !== undefined", timeout=15000)
 
+    # Global dialog handler — auto-accepts all dialogs, records messages
+    _all_dialogs = []
+    page.on("dialog", lambda d: (_all_dialogs.append(d.message), d.accept()))
+
     # ========================================================
     section("1. hexToBytes")
     # ========================================================
@@ -364,12 +368,14 @@ def run_tests(page, base_url):
     section("7. colourField")
     # ========================================================
 
-    # Test with the change address input
+    # Test with an output address input
     page.select_option("#network", "mainnet")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.click("#addOutputButton")
 
     # Empty → neutral (#ccc or rgb)
     color = page.evaluate("""() => {
-        const el = document.getElementById('changeAddress');
+        const el = document.querySelector('.output-address');
         el.value = '';
         window._fn.colourField(el, false);
         return el.style.borderColor;
@@ -378,7 +384,7 @@ def run_tests(page, base_url):
 
     # Valid → green
     color = page.evaluate("""() => {
-        const el = document.getElementById('changeAddress');
+        const el = document.querySelector('.output-address');
         el.value = 'something';
         window._fn.colourField(el, true);
         return el.style.borderColor;
@@ -387,7 +393,7 @@ def run_tests(page, base_url):
 
     # Invalid → red
     color = page.evaluate("""() => {
-        const el = document.getElementById('changeAddress');
+        const el = document.querySelector('.output-address');
         el.value = 'invalid';
         window._fn.colourField(el, false);
         return el.style.borderColor;
@@ -415,37 +421,7 @@ def run_tests(page, base_url):
     test("createPsbt no change — 1 output", result["outputCount"] == 1)
     test("createPsbt has toBuffer", result["hasBuffer"] is True)
 
-    # With change address
-    result = page.evaluate(f"""() => {{
-        const utxos = [{{ txid: "{FAKE_TXID}", vout: 0, value: 100000, scriptPubKey: "{P2WPKH_SCRIPT}" }}];
-        const outputs = [{{ address: "{MAINNET_P2WPKH}", value: 50000 }}];
-        const psbt = window._fn.createPsbtFromInputs(utxos, outputs, 1000, "{MAINNET_P2WPKH}");
-        return {{ outputCount: psbt.data.outputs.length }};
-    }}""")
-    # 50000 output + (100000-50000-1000)=49000 change = 2 outputs
-    test("createPsbt with change — 2 outputs", result["outputCount"] == 2)
-
-    # Change exactly zero (fee eats the rest) — no change output added
-    result = page.evaluate(f"""() => {{
-        const utxos = [{{ txid: "{FAKE_TXID}", vout: 0, value: 100000, scriptPubKey: "{P2WPKH_SCRIPT}" }}];
-        const outputs = [{{ address: "{MAINNET_P2WPKH}", value: 50000 }}];
-        const psbt = window._fn.createPsbtFromInputs(utxos, outputs, 50000, "{MAINNET_P2WPKH}");
-        return {{ outputCount: psbt.data.outputs.length }};
-    }}""")
-    test("createPsbt change=0 — 1 output (no change)", result["outputCount"] == 1)
-
-    # Outputs + fee exceed input — should throw
-    threw = page.evaluate(f"""() => {{
-        try {{
-            const utxos = [{{ txid: "{FAKE_TXID}", vout: 0, value: 100000, scriptPubKey: "{P2WPKH_SCRIPT}" }}];
-            const outputs = [{{ address: "{MAINNET_P2WPKH}", value: 90000 }}];
-            window._fn.createPsbtFromInputs(utxos, outputs, 20000, "{MAINNET_P2WPKH}");
-            return false;
-        }} catch(e) {{ return e.message; }}
-    }}""")
-    test("createPsbt outputs+fee>input throws", "exceed" in str(threw).lower(), f"got {threw}")
-
-    # No change mode, outputs > inputs — should throw
+    # Outputs > inputs — should throw
     threw = page.evaluate(f"""() => {{
         try {{
             const utxos = [{{ txid: "{FAKE_TXID}", vout: 0, value: 50000, scriptPubKey: "{P2WPKH_SCRIPT}" }}];
@@ -454,9 +430,9 @@ def run_tests(page, base_url):
             return false;
         }} catch(e) {{ return e.message; }}
     }}""")
-    test("createPsbt no-change outputs>inputs throws", "exceed" in str(threw).lower(), f"got {threw}")
+    test("createPsbt outputs>inputs throws", "exceed" in str(threw).lower(), f"got {threw}")
 
-    # Multiple inputs and outputs
+    # Multiple inputs and outputs (implicit fee)
     result = page.evaluate(f"""() => {{
         const utxos = [
             {{ txid: "{FAKE_TXID}", vout: 0, value: 100000, scriptPubKey: "{P2WPKH_SCRIPT}" }},
@@ -466,15 +442,15 @@ def run_tests(page, base_url):
             {{ address: "{MAINNET_P2WPKH}", value: 50000 }},
             {{ address: "{MAINNET_P2WPKH}", value: 60000 }}
         ];
-        const psbt = window._fn.createPsbtFromInputs(utxos, outputs, 5000, "{MAINNET_P2WPKH}");
+        const psbt = window._fn.createPsbtFromInputs(utxos, outputs, 0, "");
         return {{
             inputCount: psbt.data.inputs.length,
             outputCount: psbt.data.outputs.length
         }};
     }}""")
-    # 2 inputs, 2 explicit outputs + 1 change (300000-110000-5000=185000) = 3 outputs
+    # 2 inputs, 2 outputs, implicit fee = 300000-110000 = 190000
     test("createPsbt multi — 2 inputs", result["inputCount"] == 2)
-    test("createPsbt multi — 3 outputs (incl change)", result["outputCount"] == 3)
+    test("createPsbt multi — 2 outputs", result["outputCount"] == 2)
 
     # Verify witnessUtxo is set on inputs
     result = page.evaluate(f"""() => {{
@@ -535,25 +511,11 @@ def run_tests(page, base_url):
     test("remove output row", count == 1)
 
     # ========================================================
-    section("11. DOM: Change Mode Toggle")
+    section("11. DOM: Fee Rate Always Visible")
     # ========================================================
 
-    # With change checked
-    page.check("#includeChange")
     fee_visible = page.evaluate("() => document.getElementById('feeRateGroup').style.display !== 'none'")
-    change_visible = page.evaluate("() => document.getElementById('changeAddrGroup').style.display !== 'none'")
-    test("change mode ON — fee rate visible", fee_visible)
-    test("change mode ON — change addr visible", change_visible)
-
-    # Uncheck
-    page.uncheck("#includeChange")
-    fee_visible = page.evaluate("() => document.getElementById('feeRateGroup').style.display !== 'none'")
-    change_visible = page.evaluate("() => document.getElementById('changeAddrGroup').style.display !== 'none'")
-    test("change mode OFF — fee rate hidden", not fee_visible)
-    test("change mode OFF — change addr hidden", not change_visible)
-
-    # Re-check for remaining tests
-    page.check("#includeChange")
+    test("fee rate section always visible", fee_visible)
 
     # ========================================================
     section("12. DOM: Script Label Live Decoding")
@@ -609,23 +571,14 @@ def run_tests(page, base_url):
     test("output address invalid → red", color == "red", f"got '{color}'")
 
     # ========================================================
-    section("14. DOM: Change Address Validation")
+    section("14. DOM: Default Output Row on Load")
     # ========================================================
 
-    page.select_option("#network", "mainnet")
-    change_input = page.locator("#changeAddress")
-
-    change_input.fill(MAINNET_P2WPKH)
-    change_input.dispatch_event("input")
-    time.sleep(0.2)
-    color = page.evaluate("() => document.getElementById('changeAddress').style.borderColor")
-    test("change address valid → green", color == "green", f"got '{color}'")
-
-    change_input.fill("bad")
-    change_input.dispatch_event("input")
-    time.sleep(0.2)
-    color = page.evaluate("() => document.getElementById('changeAddress').style.borderColor")
-    test("change address invalid → red", color == "red", f"got '{color}'")
+    # Reload page to check default state
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    count = page.evaluate("() => document.querySelectorAll('#outputContainer [data-output]').length")
+    test("default output row on load", count == 1)
 
     # ========================================================
     section("15. DOM: Network Change Re-validates")
@@ -656,7 +609,6 @@ def run_tests(page, base_url):
     # ========================================================
 
     page.select_option("#network", "mainnet")
-    page.check("#includeChange")
 
     # Set up input and output
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
@@ -667,31 +619,21 @@ def run_tests(page, base_url):
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
     }}""")
 
-    # Set fee rate and change address
+    # Set fee rate
     page.fill("#feeRate", "10")
-    page.fill("#changeAddress", MAINNET_P2WPKH)
     page.locator("#feeRate").dispatch_event("input")
     time.sleep(0.3)
 
     fee_text = page.evaluate("() => document.getElementById('feeCalc').textContent")
     test("fee calc shows estimated fee", "Estimated fee" in fee_text, f"got '{fee_text}'")
     test("fee calc shows vB", "vB" in fee_text, f"got '{fee_text}'")
-
-    # Uncheck change mode
-    page.uncheck("#includeChange")
-    time.sleep(0.3)
-    fee_text = page.evaluate("() => document.getElementById('feeCalc').textContent")
-    test("no-change fee calc shows transaction fee", "Transaction fee: 50000 sats" in fee_text, f"got '{fee_text}'")
-
-    # Re-check for next tests
-    page.check("#includeChange")
+    test("fee calc shows available", "Available" in fee_text, f"got '{fee_text}'")
 
     # ========================================================
     section("17. Integration: Create PSBT Download")
     # ========================================================
 
     page.select_option("#network", "mainnet")
-    page.check("#includeChange")
 
     # Set up valid inputs
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
@@ -699,12 +641,11 @@ def run_tests(page, base_url):
 
     page.evaluate(f"""() => {{
         window._fn.addInput(null, "{FAKE_TXID}", 0, 100000, "{P2WPKH_SCRIPT}");
-        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 90000);
     }}""")
     page.fill("#feeRate", "10")
-    page.fill("#changeAddress", MAINNET_P2WPKH)
 
-    # Intercept download
+    # Intercept download (global dialog handler auto-accepts percentage warning)
     with page.expect_download() as download_info:
         page.click("#createPsbt")
     download = download_info.value
@@ -723,41 +664,36 @@ def run_tests(page, base_url):
     section("18. Integration: Validation Errors")
     # ========================================================
 
-    # Missing fee rate — use empty txid to avoid slow network fetches
+    # Missing fee rate
     page.select_option("#network", "mainnet")
-    page.check("#includeChange")
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
-    # Use empty txid so fetchAllNonWitnessUtxos has nothing to fetch
     page.evaluate(f"""() => {{
         window._fn.addInput(null, "", 0, 100000, "{P2WPKH_SCRIPT}");
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
     }}""")
     page.fill("#feeRate", "")
-    page.fill("#changeAddress", MAINNET_P2WPKH)
 
-    dialog_msg = []
-    page.on("dialog", lambda d: (dialog_msg.append(d.message), d.accept()))
+    _all_dialogs.clear()
     page.click("#createPsbt")
     time.sleep(1)
-    test("missing fee rate shows alert", len(dialog_msg) > 0 and "fee" in dialog_msg[-1].lower(),
-         f"got {dialog_msg}")
+    test("missing fee rate shows alert", len(_all_dialogs) > 0 and "fee" in _all_dialogs[-1].lower(),
+         f"got {_all_dialogs}")
 
-    # Invalid change address
-    dialog_msg.clear()
+    # No outputs
+    _all_dialogs.clear()
     page.fill("#feeRate", "10")
-    page.fill("#changeAddress", "bad_address")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
     page.click("#createPsbt")
     time.sleep(1)
-    test("invalid change addr shows alert", len(dialog_msg) > 0 and "change" in dialog_msg[-1].lower(),
-         f"got {dialog_msg}")
+    test("no outputs shows alert", len(_all_dialogs) > 0 and "output" in _all_dialogs[-1].lower(),
+         f"got {_all_dialogs}")
 
     # ========================================================
-    section("19. Integration: No-Change PSBT Creation")
+    section("19. Integration: Implicit Fee PSBT Creation")
     # ========================================================
 
     page.select_option("#network", "mainnet")
-    page.uncheck("#includeChange")
 
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
@@ -766,26 +702,27 @@ def run_tests(page, base_url):
         window._fn.addInput(null, "{FAKE_TXID}", 0, 100000, "{P2WPKH_SCRIPT}");
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 95000);
     }}""")
+    page.fill("#feeRate", "1")
 
     with page.expect_download() as download_info:
         page.click("#createPsbt")
     download = download_info.value
-    test("no-change PSBT download works", download is not None)
+    test("implicit fee PSBT download works", download is not None)
 
-    # Verify PSBT has 1 output (no change)
+    # Verify PSBT has 1 output
     path = download.path()
     with open(path, "rb") as f:
         psbt_bytes = f.read()
-    test("no-change PSBT has magic header", psbt_bytes[:5] == b"psbt\xff")
+    test("implicit fee PSBT has magic header", psbt_bytes[:5] == b"psbt\xff")
 
-    # Also verify through JS that 1 output in the PSBT
+    # Verify through JS that 1 output
     result = page.evaluate(f"""() => {{
         const utxos = [{{ txid: "{FAKE_TXID}", vout: 0, value: 100000, scriptPubKey: "{P2WPKH_SCRIPT}" }}];
         const outputs = [{{ address: "{MAINNET_P2WPKH}", value: 95000 }}];
         const psbt = window._fn.createPsbtFromInputs(utxos, outputs, 0, "");
         return psbt.data.outputs.length;
     }}""")
-    test("no-change PSBT: 1 output in JS", result == 1)
+    test("implicit fee PSBT: 1 output in JS", result == 1)
 
     # ========================================================
     section("20. HW Wallet Info Toggle")
@@ -881,19 +818,6 @@ def run_tests(page, base_url):
     }}""")
     test("multi-input: input 0 has bip32", result["input0_bip32"] is True)
     test("multi-input: input 1 no bip32", result["input1_bip32"] is False)
-
-    # ========================================================
-    section("21. Sortable Drag & Drop Initialized")
-    # ========================================================
-
-    # Verify Sortable is attached to containers
-    has_sortable = page.evaluate("""() => {
-        const utxoEl = document.getElementById('utxoContainer');
-        const outputEl = document.getElementById('outputContainer');
-        // Sortable adds data attributes
-        return !!(utxoEl && outputEl);
-    }""")
-    test("sortable containers exist", has_sortable)
 
     # ========================================================
     section("21. PSBT Buffer Round-Trip")
@@ -1000,6 +924,128 @@ def run_tests(page, base_url):
 
     # Clean up the extra input row
     page.click("[data-utxo]:last-child .remove")
+
+    # ========================================================
+    section("23. Output Percentages & Wipe")
+    # ========================================================
+
+    page.select_option("#network", "mainnet")
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    # Set up: 1 input worth 100000 sats, fee rate 10 sat/vB
+    page.evaluate(f"""() => {{
+        window._fn.addInput(null, "{FAKE_TXID}", 0, 100000, "{P2WPKH_SCRIPT}");
+    }}""")
+    page.fill("#feeRate", "10")
+    page.locator("#feeRate").dispatch_event("input")
+    time.sleep(0.3)
+
+    # Get available sats for reference
+    available = page.evaluate("() => window._fn.getAvailableSats()")
+    test("getAvailableSats returns positive", available > 0, f"got {available}")
+
+    # Test 1: Percentage label shows % of total input
+    total_in = 100000
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", {total_in});
+    }}""")
+    time.sleep(0.2)
+    pct_text = page.evaluate("() => document.querySelector('.output-pct').textContent")
+    pct = float(pct_text.replace('%', ''))
+    test("pct label 100% from total input", abs(pct - 100) < 0.1, f"got {pct_text}")
+
+    # Test 2: Percentage label ~50% from half input
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    half = total_in // 2
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", {half});
+    }}""")
+    time.sleep(0.2)
+    pct_text = page.evaluate("() => document.querySelector('.output-pct').textContent")
+    pct = float(pct_text.replace('%', ''))
+    test("pct label ~50% from half input", abs(pct - 50) < 0.1, f"got {pct_text}")
+
+    # Test 3: Output pct labels sum < 100 (fee takes a share)
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", {available});
+    }}""")
+    time.sleep(0.2)
+    pct_text = page.evaluate("() => document.querySelector('.output-pct').textContent")
+    pct = float(pct_text.replace('%', ''))
+    test("wipe output pct < 100 (fee share)", pct < 100, f"got {pct_text}")
+
+    # Test 5: Wipe checkbox — only one active at a time
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 10000);
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 20000);
+    }}""")
+    # Check first wipe
+    page.locator("[data-output]:first-child .output-wipe").check()
+    time.sleep(0.2)
+    first_checked = page.evaluate("() => document.querySelector('[data-output]:first-child .output-wipe').checked")
+    test("wipe first checked", first_checked)
+
+    # Check second wipe — should uncheck first
+    page.locator("[data-output]:last-child .output-wipe").check()
+    time.sleep(0.2)
+    first_still = page.evaluate("() => document.querySelector('[data-output]:first-child .output-wipe').checked")
+    second_checked = page.evaluate("() => document.querySelector('[data-output]:last-child .output-wipe').checked")
+    test("wipe only-one: first unchecked", not first_still)
+    test("wipe only-one: second checked", second_checked)
+
+    # Test 6: Wipe remainder calc
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 30000);
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 0);
+    }}""")
+    # Recalculate available with current number of outputs (2)
+    avail_2out = page.evaluate("() => window._fn.getAvailableSats()")
+    page.locator("[data-output]:last-child .output-wipe").check()
+    time.sleep(0.2)
+    wipe_val = page.evaluate("() => parseInt(document.querySelector('[data-output]:last-child .output-value').value)")
+    expected_wipe = avail_2out - 30000
+    test("wipe remainder calc", abs(wipe_val - expected_wipe) < 2, f"got {wipe_val}, expected ~{expected_wipe}")
+
+    # Test 7: Wipe row value disabled
+    val_disabled = page.evaluate("() => document.querySelector('[data-output]:last-child .output-value').disabled")
+    test("wipe row: value disabled", val_disabled)
+
+    # Test 8: Uncheck wipe restores value field
+    page.locator("[data-output]:last-child .output-wipe").uncheck()
+    time.sleep(0.2)
+    val_disabled = page.evaluate("() => document.querySelector('[data-output]:last-child .output-value').disabled")
+    test("unwipe: value enabled", not val_disabled)
+
+    # Test 9: gatherOutputs returns correct data
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 40000);
+    }}""")
+    gathered = page.evaluate("() => window._fn.gatherOutputs()")
+    test("gatherOutputs count", len(gathered) == 2)
+    test("gatherOutputs first value", gathered[0]["value"] == 50000)
+    test("gatherOutputs second value", gathered[1]["value"] == 40000)
+
+    # Test 10: Fee rate required for PSBT creation (use empty txid to avoid network fetch delays)
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate(f"""() => {{
+        window._fn.addInput(null, "", 0, 100000, "{P2WPKH_SCRIPT}");
+        window._fn.addOutput(null, "{MAINNET_P2WPKH}", 90000);
+    }}""")
+    page.evaluate("() => { document.getElementById('feeRate').value = ''; }")
+    _all_dialogs.clear()
+    page.click("#createPsbt")
+    time.sleep(2)
+    test("fee rate required for create", len(_all_dialogs) > 0 and "fee" in _all_dialogs[-1].lower(),
+         f"got {_all_dialogs}")
+
 
 
 # ============================================================

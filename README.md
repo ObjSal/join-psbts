@@ -27,9 +27,9 @@ Both approaches work through the same Combine & Finalize step.
 ## Features
 
 - **Fetch UTXOs** by address from mempool.space (or local regtest server), displayed as compact read-only cards
-- **Fee rate presets** pulled live from the network (fast/medium/slow), defaults to slow
+- **Fee rate presets** pulled live from the network (fast/medium/slow), with estimated fee and available sats display
+- **Output percentage labels** showing each output's share of total input, with a Wipe option to sweep remaining balance
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
-- **Drag-and-drop reordering** of inputs and outputs
 - **Network support** for Mainnet, Testnet4, and Regtest
 - **Guided workflow** with brief instructions under each step
 - **No server required** -- runs entirely in the browser on GitHub Pages
@@ -58,7 +58,7 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- 101 tests, no bitcoind needed (~15s)
+# Unit tests -- 108 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
 # E2E regtest tests -- 99 tests, requires bitcoind + bitcoin-cli (~90s)
@@ -96,7 +96,7 @@ Fund the wallet at the [testnet4 faucet](https://mempool.space/testnet4/faucet).
 ## Tech Stack
 
 - **Frontend**: Single `index.html` file, no build step
-- **JS Libraries** (loaded via CDN): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [PaperCSS](https://www.getpapercss.com/), [SortableJS](https://sortablejs.github.io/Sortable/)
+- **JS Libraries** (loaded via CDN): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [PaperCSS](https://www.getpapercss.com/)
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)
 

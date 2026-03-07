@@ -4,10 +4,10 @@ Single-page web app for building, signing, combining, and broadcasting multi-wal
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1 (all ESM via esm.sh), PaperCSS for styling, SortableJS for drag-and-drop reordering. Includes a donate button linking to `donate.html`.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1 (all ESM via esm.sh), PaperCSS for styling. Includes a donate button linking to `donate.html`.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 101 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, and xpub derivation.
+- **`tests/test_psbt_builder.py`** — 108 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, and output percentage/wipe behavior.
 - **`tests/test_regtest_e2e.py`** — 99 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
@@ -44,8 +44,16 @@ When both xpub and path fields are filled, the pubkey field auto-populates and b
 ### Hardened Path Normalization
 bitcoinjs-lib only recognizes `'` (apostrophe) for hardened BIP32 path segments. The `h` and `H` suffixes used by Coldcard and other hardware wallets are silently treated as unhardened, producing wrong indices in the PSBT binary. The derivation path is normalized (`h`/`H` → `'`) when reading from the DOM before writing to `bip32Derivation`.
 
-### No Default Empty Rows
-Neither input nor output containers have default empty rows on page load. Users click "+ Add Input (manual entry)" or "+ Add Output" to add rows manually, or use "Fetch & Add UTXOs" for inputs.
+### Output Percentage Labels & Wipe
+Each output row has a value (sats) field, a small read-only percentage label below it, and a Wipe checkbox.
+- **Percentage label**: `updateOutputPercentages()` displays `sats / totalInput * 100` as a small `<small>` label below the sats input. Purely informational — not editable.
+- **Wipe output**: Only one output can have Wipe checked. The wipe row's value is auto-calculated as `available - sumOfOtherOutputs`. Its value field is disabled.
+- **Available sats**: `getAvailableSats()` returns `totalInput - estimatedFee` using rough vsize heuristic `ceil(10.5 + 68*nIn + 31*nOut)`.
+- **Fee rate required**: The fee rate field is always visible (no change mode toggle). Creating a PSBT requires a positive fee rate.
+- **Percentage warning**: If outputs don't sum to ~100% of available sats and no wipe output exists, a `confirm()` dialog warns the user. Leftover becomes extra miner fee.
+
+### Default Rows on Page Load
+One default empty output row is shown on page load. No default input rows — users click "+ Add Input (manual entry)" or use "Fetch & Add UTXOs".
 
 ### UTXO Container Selectors
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.

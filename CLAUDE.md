@@ -36,6 +36,27 @@ walletprocesspsbt <psbt> true "DEFAULT" true false
 ### Fetched UTXO Cards
 `fetchUtxos()` uses `addFetchedInput()` to create compact read-only cards with hidden `<input>` elements (txid, vout, value, scriptPubKey) that preserve PSBT creation compatibility. The full address is shown in the source label. The fetch input is cleared after fetching. No empty input row is shown on page load — users click "+ Add Input (manual entry)" for manual UTXO entry.
 
+### Xpub-Based UTXO Fetching
+The fetch input accepts both plain addresses and extended public keys (xpub/zpub/vpub/tpub/ypub/upub). When an xpub is detected via `isExtendedKey()`, `fetchUtxosFromXpub()` orchestrates a full wallet scan:
+
+**Address type inference from SLIP-132 prefix** (`XPUB_ADDRESS_TYPES` map):
+- `zpub`/`vpub` → P2WPKH only (BIP84)
+- `ypub`/`upub` → P2SH-P2WPKH only (BIP49)
+- `xpub`/`tpub` → both P2WPKH and P2TR (BIP84 + BIP86)
+
+**Scanning**: `scanXpubAddresses()` derives addresses along one chain (0=receive, 1=change) for one address type, fetching UTXOs with a BIP44 gap limit of 20. Batches 5 addresses in parallel with 200ms delays for mempool.space rate limiting.
+
+**Address generation** (`pubkeyToAddress()`):
+- P2WPKH: `bitcoin.crypto.hash160()` + `bitcoin.address.toBech32(hash, 0, ...)`
+- P2TR: Manual BIP341 taproot tweak using `bitcoin.crypto.taggedHash('TapTweak')` + `ecc.xOnlyPointAddTweak()` + `bitcoin.address.toBech32(tweaked, 1, ...)`. Note: `bitcoin.payments.p2tr` doesn't work in the ESM build ("Not enough data" error).
+- P2SH-P2WPKH: `bitcoin.payments.p2wpkh()` + `bitcoin.payments.p2sh()`
+
+**HW wallet info pre-population**: When UTXOs come from an xpub scan, `addFetchedInput()` receives an `hwInfo` parameter `{ xpub, path, pubkey }` that pre-fills the HW wallet fields. The section stays collapsed but shows a ✔️ prefix on the toggle text. The prefix is captured in a `hwPrefix` variable and used in both the initial set and the click handler so it persists through expand/collapse.
+
+**Derivation path**: For standard account-level xpubs (depth 3), the full path is constructed as `m/{purpose}'/{coinType}'/0'/{chain}/{index}`. For non-standard depths, only the relative path `{chain}/{index}` is stored.
+
+**Network validation**: Mainnet xpubs are rejected when testnet/regtest is selected and vice versa.
+
 ### Xpub Auto-Derivation (Hardware Wallet)
 The HW wallet section includes an xpub field that auto-derives the compressed public key. Three functions handle this:
 - **`normalizeExtendedKey(key)`** — Converts SLIP-132 prefixes (ypub/zpub/vpub/upub and multisig variants) to canonical xpub/tpub using a version-bytes map, so `bip32.fromBase58()` accepts any format.

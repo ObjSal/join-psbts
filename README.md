@@ -32,6 +32,7 @@ Both approaches work through the same Combine & Finalize step.
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
 - **QR code scanning** to upload signed PSBTs from hardware wallets via camera, with BBQr multi-part support and progress bar -- combine QR-scanned and file-uploaded PSBTs from different sources
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
+- **Browser-based PSBT signer** (`sign.html`) for hot and paper wallets -- sign PSBTs with a WIF private key directly in the browser, supports P2WPKH and P2TR (Taproot)
 - **CLI signing tool** (`tools/sign-psbt.py`) for hot wallet signing with WIF keys
 - **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
@@ -110,7 +111,7 @@ python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 
 ## Tech Stack
 
-- **Frontend**: Single `index.html` file, no build step
+- **Frontend**: `index.html` (sweeper) + `sign.html` (PSBT signer), no build step
 - **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [jsQR](https://github.com/nicolo-ribaudo/jsQR), [qrcode-generator](https://github.com/nicolo-ribaudo/qrcodegen) v1.4.4, [PaperCSS](https://www.getpapercss.com/)
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)

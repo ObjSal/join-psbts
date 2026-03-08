@@ -391,6 +391,8 @@ def run_tests(page, base_url, cli, server_url):
     section("6. Combine & Finalize via UI")
     # ========================================================
 
+    # Navigate to Sign card
+    page.evaluate("() => window._fn.showCard('cardSign')")
     # Upload signed PSBTs
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [signed_a_path, signed_b_path])
@@ -585,6 +587,7 @@ def run_tests(page, base_url, cli, server_url):
     section("12. Finalize via UI (Single File)")
     # ========================================================
 
+    page.evaluate("() => window._fn.showCard('cardSign')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [serial_path])
     page.click("#combinePsbt")
@@ -775,6 +778,7 @@ def run_tests(page, base_url, cli, server_url):
     section("18. Combine & Finalize via UI (Taproot)")
     # ========================================================
 
+    page.evaluate("() => window._fn.showCard('cardSign')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [tr_a_path, tr_b_path])
     page.click("#combinePsbt")
@@ -957,6 +961,7 @@ def run_tests(page, base_url, cli, server_url):
     section("24. Finalize via UI (Taproot Serial)")
     # ========================================================
 
+    page.evaluate("() => window._fn.showCard('cardSign')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [trs_path])
     page.click("#combinePsbt")
@@ -1189,6 +1194,7 @@ def run_tests(page, base_url, cli, server_url):
     all_dialogs = []
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
+    page.evaluate("() => window._fn.showCard('cardSign')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [e_signed_path])
     page.click("#combinePsbt")
@@ -1255,6 +1261,450 @@ def run_tests(page, base_url, cli, server_url):
     # taproot key-path spending, which sign.html's current ECPair-based
     # signing doesn't handle. P2TR signing via bitcoin-cli (walletprocesspsbt)
     # is fully tested in Parts C and D above.
+
+    # ================================================================
+    # Part F: WIF Fetch & Inline Sign (index.html)
+    # ================================================================
+
+    # ========================================================
+    section("32. Generate Keypair & Fund (WIF Fetch)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    # Generate keypair in index.html (which now has ECPair)
+    kp_wif = page.evaluate("""() => {
+        const net = window._fn.getSelectedNetwork();
+        const kp = window._ECPair.makeRandom({ network: net });
+        const { address } = window._bitcoin.payments.p2wpkh({
+            pubkey: kp.publicKey, network: net
+        });
+        return { wif: kp.toWIF(), address: address };
+    }""")
+
+    test("wif fetch: keypair generated",
+         kp_wif.get("wif") is not None and kp_wif.get("address") is not None)
+    test("wif fetch: address is bcrt1q",
+         kp_wif["address"].startswith("bcrt1q"),
+         f"got {kp_wif['address']}")
+
+    # Fund the generated address
+    F_FUND = "0.3"
+    F_FUND_SATS = 30_000_000
+    F_SEND = 29_900_000     # minus fee
+
+    res_f = api_post(server_url, "/api/faucet",
+                     {"address": kp_wif["address"], "amount": F_FUND})
+    test("wif fetch: faucet funded", res_f.get("success") is True)
+
+    # Create recipient address
+    addr_f_recip = cli.run("getnewaddress", "", "bech32", wallet="wallet_recipient")
+    test("wif fetch: recipient address valid",
+         addr_f_recip.startswith("bcrt1q"), f"got {addr_f_recip}")
+
+    # ========================================================
+    section("33. Fetch UTXOs via WIF")
+    # ========================================================
+
+    # Clear existing UTXOs and outputs
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    # Paste WIF into fetch input
+    page.fill("#fetchAddress", kp_wif["wif"])
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+
+    status_f = page.text_content("#fetchStatus")
+    test("wif fetch: UTXOs fetched", "Added" in status_f and "from WIF" in status_f,
+         f"got: {status_f}")
+
+    # Verify WIF was cleared from input
+    fetch_val = page.evaluate("() => document.getElementById('fetchAddress').value")
+    test("wif fetch: input cleared after fetch", fetch_val == "",
+         f"got: '{fetch_val}'")
+
+    # Check UTXO rows exist
+    utxo_count = len(page.query_selector_all("[data-utxo]"))
+    test("wif fetch: at least 1 UTXO row", utxo_count >= 1,
+         f"got {utxo_count}")
+
+    # Verify data-wif attribute is set
+    data_wif_val = page.evaluate(
+        "() => document.querySelector('[data-utxo]').getAttribute('data-wif')")
+    test("wif fetch: data-wif attribute set", data_wif_val == kp_wif["wif"])
+
+    # Verify WIF toggle shows checkmark
+    wif_toggle = page.evaluate(
+        "() => document.querySelector('.wif-toggle').textContent")
+    test("wif fetch: WIF toggle shows checkmark", '\u2714' in wif_toggle,
+         f"got '{wif_toggle}'")
+
+    # Verify allUtxosHaveWif returns true
+    all_wif = page.evaluate("() => window._fn.allUtxosHaveWif()")
+    test("wif fetch: allUtxosHaveWif is true", all_wif is True)
+
+    # ========================================================
+    section("34. Dynamic Step Layout (WIF mode)")
+    # ========================================================
+
+    # Step layout should show 2 steps (WIF mode)
+    visible_steps = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none').length;
+    }""")
+    test("wif mode: 2 steps visible", visible_steps == 2,
+         f"got {visible_steps}")
+
+    # Button should say "Create, Sign & Finalize"
+    btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
+    test("wif mode: button says 'Create, Sign & Finalize'",
+         'Sign' in btn_text, f"got '{btn_text}'")
+
+    # ========================================================
+    section("35. Create, Sign & Finalize via WIF (inline)")
+    # ========================================================
+
+    all_dialogs.clear()
+
+    # Set fee rate
+    page.fill("#feeRate", "1")
+    time.sleep(0.5)
+
+    # Add output
+    page.evaluate("() => window._fn.addOutput()")
+    page.wait_for_selector("[data-output]")
+    output_row = page.query_selector("[data-output]")
+    addr_input = output_row.query_selector(".output-address")
+    addr_input.fill(addr_f_recip)
+
+    # Set output value
+    value_input = output_row.query_selector("input[placeholder='sats']")
+    value_input.fill(str(F_SEND))
+
+    # Click "Create, Sign & Finalize"
+    page.click("#createPsbt")
+    page.wait_for_timeout(2000)
+
+    # Should have no alerts
+    test("wif inline sign: no error alerts", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    # Broadcast card should be visible
+    broadcast_visible = page.evaluate(
+        "() => !document.getElementById('cardBroadcast').classList.contains('hidden')")
+    test("wif inline sign: broadcast card visible", broadcast_visible is True)
+
+    # Create card should be hidden
+    create_hidden = page.evaluate(
+        "() => document.getElementById('cardCreate').classList.contains('hidden')")
+    test("wif inline sign: create card hidden", create_hidden is True)
+
+    # Signed tx hex should be displayed
+    tx_hex = page.evaluate(
+        "() => document.getElementById('wifSignedTxHex').textContent")
+    test("wif inline sign: signed tx hex shown",
+         tx_hex is not None and len(tx_hex) > 100,
+         f"hex length: {len(tx_hex) if tx_hex else 0}")
+
+    # ========================================================
+    section("36. Broadcast & Verify (WIF inline sign)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("wif broadcast: no error on broadcast", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    f_bcast = page.text_content("#broadcastResult")
+    test("wif broadcast: shows TXID",
+         f_bcast is not None and "Broadcasted TXID:" in f_bcast,
+         f"got: {f_bcast}")
+
+    f_txid_match = re.search(r'[a-f0-9]{64}', f_bcast or "")
+    test("wif broadcast: TXID valid", f_txid_match is not None)
+    f_txid = f_txid_match.group(0) if f_txid_match else ""
+
+    if not f_txid:
+        test("SKIP: wif broadcast on-chain verification", False,
+             "broadcast failed")
+    else:
+        try:
+            api_post(server_url, "/api/mine", {"blocks": 1})
+        except Exception:
+            pass
+
+        decoded_f = cli.run_json("getrawtransaction", f_txid, "true")
+        test("wif broadcast: transaction confirmed",
+             decoded_f.get("confirmations", 0) >= 1,
+             f"confirmations={decoded_f.get('confirmations', 0)}")
+        test("wif broadcast: 1 input",
+             len(decoded_f.get("vin", [])) == 1,
+             f"got {len(decoded_f.get('vin', []))}")
+        test("wif broadcast: 1 output",
+             len(decoded_f.get("vout", [])) == 1,
+             f"got {len(decoded_f.get('vout', []))}")
+        test("wif broadcast: output amount correct",
+             round(decoded_f["vout"][0]["value"] * 1e8) == F_SEND,
+             f"expected {F_SEND}, got {round(decoded_f['vout'][0]['value'] * 1e8)}")
+
+
+    # ================================================================
+    # Part G: Mixed WIF Partial Signing
+    # ================================================================
+
+    # ========================================================
+    section("37. Generate Two Keypairs & Fund (Mixed WIF)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    # Generate keypair A (will be fetched via WIF → has WIF)
+    kp_a = page.evaluate("""() => {
+        const net = window._fn.getSelectedNetwork();
+        const kp = window._ECPair.makeRandom({ network: net });
+        const { address } = window._bitcoin.payments.p2wpkh({
+            pubkey: kp.publicKey, network: net
+        });
+        return { wif: kp.toWIF(), address: address };
+    }""")
+    test("mixed: keypair A generated", kp_a.get("wif") is not None)
+
+    # Generate keypair B (will be fetched via address → no WIF)
+    kp_b = page.evaluate("""() => {
+        const net = window._fn.getSelectedNetwork();
+        const kp = window._ECPair.makeRandom({ network: net });
+        const { address } = window._bitcoin.payments.p2wpkh({
+            pubkey: kp.publicKey, network: net
+        });
+        return { wif: kp.toWIF(), address: address };
+    }""")
+    test("mixed: keypair B generated", kp_b.get("wif") is not None)
+
+    # Fund both addresses
+    G_FUND = "0.2"
+    G_SEND = 39_999_000  # 0.4 BTC total minus ~1000 sats fee
+
+    res_a = api_post(server_url, "/api/faucet",
+                     {"address": kp_a["address"], "amount": G_FUND})
+    test("mixed: faucet funded A", res_a.get("success") is True)
+
+    res_b = api_post(server_url, "/api/faucet",
+                     {"address": kp_b["address"], "amount": G_FUND})
+    test("mixed: faucet funded B", res_b.get("success") is True)
+
+    # Create recipient address
+    addr_g_recip = cli.run("getnewaddress", "", "bech32", wallet="wallet_recipient")
+    test("mixed: recipient address valid",
+         addr_g_recip.startswith("bcrt1q"), f"got {addr_g_recip}")
+
+    # ========================================================
+    section("38. Fetch Mixed UTXOs (WIF + Address)")
+    # ========================================================
+
+    # Clear existing UTXOs and outputs
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    # Fetch via WIF A (will have WIF attached)
+    page.fill("#fetchAddress", kp_a["wif"])
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+    test("mixed: WIF A fetched",
+         "Added" in page.text_content("#fetchStatus"))
+
+    # Fetch via address B (will NOT have WIF)
+    page.fill("#fetchAddress", kp_b["address"])
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        f"() => document.querySelectorAll('[data-utxo]').length >= 2",
+        timeout=15000)
+
+    utxo_count = len(page.query_selector_all("[data-utxo]"))
+    test("mixed: 2+ UTXO rows present", utxo_count >= 2, f"got {utxo_count}")
+
+    # Verify mixed state
+    all_wif = page.evaluate("() => window._fn.allUtxosHaveWif()")
+    test("mixed: allUtxosHaveWif is false", all_wif is False)
+
+    some_wif = page.evaluate("() => window._fn.someUtxosHaveWif()")
+    test("mixed: someUtxosHaveWif is true", some_wif is True)
+
+    # ========================================================
+    section("39. Mixed Mode Layout & Create Partially Signed PSBT")
+    # ========================================================
+
+    # Verify button text
+    btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
+    test("mixed: button says 'Partially Sign'",
+         'Partially Sign' in btn_text, f"got '{btn_text}'")
+
+    # Verify 4-step layout
+    visible_steps = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none').length;
+    }""")
+    test("mixed: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+
+    # Set output and fee
+    page.evaluate("() => window._fn.addOutput()")
+    page.wait_for_selector("[data-output]")
+    output_row = page.query_selector("[data-output]")
+    output_row.query_selector(".output-address").fill(addr_g_recip)
+    output_row.query_selector(".output-value").fill(str(G_SEND))
+
+    time.sleep(2)
+    page.fill("#feeRate", "1")
+
+    # Create partially signed PSBT
+    all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=10000)
+
+    test("mixed: no error alert on create", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    # Get the PSBT hex — it should be partially signed
+    psbt_hex = page.text_content("#psbtHex")
+    test("mixed: PSBT hex present", len(psbt_hex or "") > 0)
+
+    # ========================================================
+    section("40. Sign Remaining Inputs & Combine")
+    # ========================================================
+
+    # Parse the partially signed PSBT and verify some inputs are signed
+    partial_info = page.evaluate(f"""() => {{
+        const bitcoin = window._bitcoin;
+        const net = window._fn.getSelectedNetwork();
+        const psbt = bitcoin.Psbt.fromHex(document.getElementById('psbtHex').textContent, {{ network: net }});
+        let signed = 0;
+        let unsigned = 0;
+        for (let i = 0; i < psbt.data.inputs.length; i++) {{
+            const inp = psbt.data.inputs[i];
+            if (inp.partialSig && inp.partialSig.length > 0) signed++;
+            else unsigned++;
+        }}
+        return {{ signed, unsigned, total: psbt.data.inputs.length }};
+    }}""")
+    test("mixed: some inputs signed",
+         partial_info["signed"] > 0, f"got {partial_info}")
+    test("mixed: some inputs unsigned",
+         partial_info["unsigned"] > 0, f"got {partial_info}")
+
+    # Sign the remaining inputs with WIF B in-browser
+    psbt_b64 = page.evaluate("""() => {
+        const bitcoin = window._bitcoin;
+        const net = window._fn.getSelectedNetwork();
+        const psbt = bitcoin.Psbt.fromHex(
+            document.getElementById('psbtHex').textContent, { network: net });
+        return psbt.toBase64();
+    }""")
+
+    signed_b64 = page.evaluate(f"""(args) => {{
+        const {{ psbtB64, wif }} = args;
+        const bitcoin = window._bitcoin;
+        const net = window._fn.getSelectedNetwork();
+        const ECPair = window._ECPair;
+        const keyPair = ECPair.fromWIF(wif, net);
+        const psbt = bitcoin.Psbt.fromBase64(psbtB64, {{ network: net }});
+        for (let i = 0; i < psbt.data.inputs.length; i++) {{
+            try {{ psbt.signInput(i, keyPair); }} catch (e) {{}}
+        }}
+        return psbt.toBase64();
+    }}""", {"psbtB64": psbt_b64, "wif": kp_b["wif"]})
+
+    test("mixed: B-signed PSBT obtained", signed_b64 is not None and len(signed_b64) > 0)
+
+    # Write signed PSBT to temp file for upload
+    signed_bytes = base64.b64decode(signed_b64)
+    with tempfile.NamedTemporaryFile(suffix=".psbt", delete=False) as f:
+        f.write(signed_bytes)
+        signed_path = f.name
+
+    # Navigate to Sign card and upload
+    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.set_input_files("#psbtFiles", [signed_path])
+    page.wait_for_function(
+        "() => document.querySelectorAll('.psbt-list-item').length >= 1",
+        timeout=5000)
+
+    psbt_items = len(page.query_selector_all(".psbt-list-item"))
+    test("mixed: signed PSBT uploaded to accumulator", psbt_items >= 1,
+         f"got {psbt_items}")
+
+    # Combine & Finalize
+    all_dialogs.clear()
+    page.click("#combinePsbt")
+    page.wait_for_timeout(2000)
+
+    test("mixed: no error on combine", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    # Should have auto-navigated to broadcast card
+    broadcast_visible = page.evaluate(
+        "() => !document.getElementById('cardBroadcast').classList.contains('hidden')")
+    test("mixed: broadcast card visible after combine", broadcast_visible)
+
+    # ========================================================
+    section("41. Broadcast & Verify (Mixed WIF)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("mixed broadcast: no error", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    g_bcast = page.text_content("#broadcastResult")
+    test("mixed broadcast: shows TXID",
+         g_bcast is not None and "Broadcasted TXID:" in g_bcast,
+         f"got: {g_bcast}")
+
+    g_txid_match = re.search(r'[a-f0-9]{64}', g_bcast or "")
+    test("mixed broadcast: TXID valid", g_txid_match is not None)
+    g_txid = g_txid_match.group(0) if g_txid_match else ""
+
+    if not g_txid:
+        test("SKIP: mixed broadcast on-chain verification", False,
+             "broadcast failed")
+    else:
+        try:
+            api_post(server_url, "/api/mine", {"blocks": 1})
+        except Exception:
+            pass
+
+        decoded_g = cli.run_json("getrawtransaction", g_txid, "true")
+        test("mixed broadcast: transaction confirmed",
+             decoded_g.get("confirmations", 0) >= 1,
+             f"confirmations={decoded_g.get('confirmations', 0)}")
+        test("mixed broadcast: 2 inputs",
+             len(decoded_g.get("vin", [])) == 2,
+             f"got {len(decoded_g.get('vin', []))}")
+        test("mixed broadcast: 1 output",
+             len(decoded_g.get("vout", [])) == 1,
+             f"got {len(decoded_g.get('vout', []))}")
+        test("mixed broadcast: output amount correct",
+             round(decoded_g["vout"][0]["value"] * 1e8) == G_SEND,
+             f"expected {G_SEND}, got {round(decoded_g['vout'][0]['value'] * 1e8)}")
+
+    # Clean up temp file
+    try:
+        os.unlink(signed_path)
+    except Exception:
+        pass
 
 
 # ============================================================

@@ -98,7 +98,7 @@
       gap: 0.4rem;
       margin-top: 0.8rem;
     }
-    .hw-toggle {
+    .hw-toggle, .wif-toggle {
       font-size: 0.85rem;
       color: #888;
       cursor: pointer;
@@ -106,10 +106,24 @@
       margin-top: 0.3rem;
       display: inline-block;
     }
-    .hw-toggle:hover { color: #f7931a; }
-    .hw-fields { display: none; margin-top: 0.3rem; }
-    .hw-fields.open { display: block; }
-    .hw-fields input { font-size: 0.85rem; }
+    .hw-toggle:hover, .wif-toggle:hover { color: #f7931a; }
+    .hw-fields, .wif-fields { display: none; margin-top: 0.3rem; }
+    .hw-fields.open, .wif-fields.open { display: block; }
+    .hw-fields input, .wif-fields input { font-size: 0.85rem; }
+    .wif-toggle { margin-left: 0.8rem; }
+    /* Step indicator wizard */
+    .step-indicator { display:flex; justify-content:center; gap:0.5rem; margin-bottom:1.5rem; align-items:center; }
+    .step-indicator .step {
+      width:36px; height:36px; border-radius:50%; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; font-weight:700;
+      background:#f5f5f5; color:#999; border:2px solid #ddd; flex-shrink:0;
+    }
+    .step-indicator .step.active { background:#fff8e1; border-color:#f7931a; color:#f7931a; }
+    .step-indicator .step.done { background:#e8f5e9; border-color:#4caf50; color:#4caf50; }
+    .step-indicator .step small { font-size:0.55rem; font-weight:normal; line-height:1; }
+    .step-indicator .step span { font-size:0.75rem; line-height:1; }
+    .step-line { width:40px; height:2px; background:#ddd; flex-shrink:0; }
+    .card.hidden { display: none; }
     .fee-presets { display: flex; gap: 0.4rem; margin-top: 0.4rem; margin-bottom: 0.3rem; }
     .fee-presets button { width: auto; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
     .fee-preset.active { background: #f7931a; color: #fff; border-color: #e8850f; }
@@ -243,7 +257,17 @@
     <button type="button" class="btn-secondary" style="padding:0.3rem 0.7rem;font-size:0.85rem;margin:0;flex:0 0 auto;width:auto;" onclick="window.location.href='donate.html'">&#9749; Donate</button>
   </div>
 
-  <div class="card">
+  <div class="step-indicator" id="stepIndicator">
+    <div class="step active" data-step="1"><span>1</span><small>Create</small></div>
+    <div class="step-line"></div>
+    <div class="step" data-step="2"><span>2</span><small>Sign</small></div>
+    <div class="step-line"></div>
+    <div class="step" data-step="3"><span>3</span><small>Combine</small></div>
+    <div class="step-line"></div>
+    <div class="step" data-step="4"><span>4</span><small>Broadcast</small></div>
+  </div>
+
+  <div class="card" id="cardCreate">
     <h2>1. Create PSBT</h2>
     <p style="color:#888;font-size:0.85rem;margin-top:0;">Add inputs from each wallet by fetching UTXOs, set the outputs and fee, then download the unsigned PSBT file. Remove individual UTXOs from the list if you don't want to spend the entire wallet.</p>
 
@@ -251,7 +275,7 @@
       <h3>Inputs (UTXOs)</h3>
       <div id="utxoFetchGroup" style="margin-bottom:1rem;">
         <div class="row">
-          <input class="grow" type="text" id="fetchAddress" placeholder="Enter address or xpub/zpub/vpub to fetch UTXOs">
+          <input class="grow" type="text" id="fetchAddress" placeholder="address, xpub/zpub/vpub, or WIF private key">
           <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:160px;flex:0 0 160px;">Fetch & Add UTXOs</button>
         </div>
         <div id="fetchStatus" style="font-size:0.85rem;color:#888;margin-top:0.3rem;"></div>
@@ -286,18 +310,24 @@
         <summary style="cursor:pointer; color:#888; font-size:0.85rem;">PSBT Hex</summary>
         <pre id="psbtHex" style="font-size:0.7rem; word-break:break-all; max-height:200px; overflow-y:auto; background:#f5f5f5; padding:0.5rem; border-radius:4px; user-select:all;"></pre>
       </details>
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <div id="psbtActions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
         <button id="downloadPsbt" class="btn-secondary">Download PSBT</button>
         <button id="showQrPsbt" class="btn-secondary">Show QR Code (Air-gap signing)</button>
+        <button id="nextToSign" class="btn-primary" style="width:auto;">Next: Sign &rarr;</button>
       </div>
       <div id="qrDisplay" style="display:none; text-align:center; margin-top:1rem;">
         <canvas id="psbtQrCanvas" style="display:block; margin:0 auto;"></canvas>
         <div id="qrPartInfo" style="color:#888; font-size:0.8rem; margin-top:0.3rem;"></div>
       </div>
     </div>
+
+    <div id="wifSignResult" style="display:none; margin-top:1rem;">
+      <pre id="wifSignedTxHex" style="font-size:0.7rem; word-break:break-all; max-height:200px; overflow-y:auto; background:#f5f5f5; padding:0.5rem; border-radius:4px; user-select:all;"></pre>
+      <button id="nextToBroadcast" class="btn-primary" style="margin-top:0.5rem;width:auto;">Next: Broadcast &rarr;</button>
+    </div>
   </div>
 
-  <div class="card">
+  <div class="card hidden" id="cardSign">
     <h2>2. Upload Signed PSBTs</h2>
     <p style="color:#888;font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here (via file or QR scan) to combine and finalize.</p>
     <p style="margin-top:0.3rem;margin-bottom:0.5rem;font-size:0.9rem;">Don't know where to sign the transaction? Use the <a href="sign.html" id="signPageLink" style="color:#f7931a;">₿itcoin Transaction Signer</a></p>
@@ -329,14 +359,16 @@
 
     <button id="combinePsbt" class="btn-primary" style="margin-top:0.8rem;">Combine & Finalize</button>
     <pre id="combinedResult"></pre>
+    <button type="button" id="backToCreate" class="btn-secondary" style="margin-top:0.5rem;width:auto;">&larr; Back to Create</button>
   </div>
 
-  <div class="card">
-    <h2>3. Broadcast Transaction</h2>
+  <div class="card hidden" id="cardBroadcast">
+    <h2 id="broadcastHeading">3. Broadcast Transaction</h2>
     <p style="color:#888;font-size:0.85rem;margin-top:0;">Download the final PSBT for your records or broadcast the signed transaction to the Bitcoin network.</p>
     <button id="downloadFinalPsbt" class="btn-secondary">Download Final PSBT</button>
     <button id="broadcastTx" class="btn-success" style="margin-top:0.5rem;">Broadcast via mempool.space</button>
     <pre id="broadcastResult"></pre>
+    <button type="button" id="backToSign" class="btn-secondary" style="margin-top:0.5rem;width:auto;">&larr; Back</button>
   </div>
 
   <div style="text-align: center; padding: 24px 16px 12px; margin-top: 32px; border-top: 1px solid #e0e0e0; color: #999; font-size: 12px; line-height: 1.6;">
@@ -355,7 +387,9 @@
     bitcoin.initEccLib(ecc);
     import BIP32Factory from 'https://esm.sh/bip32@4.0.0?target=es2022';
     import bs58check from 'https://esm.sh/bs58check@3.0.1?target=es2022';
+    import { ECPairFactory } from 'https://esm.sh/ecpair@3.0.0';
     const bip32 = BIP32Factory(ecc);
+    const ECPair = ECPairFactory(ecc);
     let finalPsbt = null;
     let finalTxHex = null;
     let lastPsbt = null;
@@ -671,8 +705,9 @@
 
       if (!address) { statusEl.textContent = 'Enter an address or extended public key.'; return; }
 
-      // Dispatch: xpub scan vs single-address fetch
+      // Dispatch: xpub scan vs WIF vs single-address fetch
       if (isExtendedKey(address)) { return fetchUtxosFromXpub(address); }
+      if (isWif(address)) { return fetchUtxosFromWif(address); }
 
       if (!validateBitcoinAddress(address, net)) { statusEl.textContent = 'Invalid address for selected network.'; return; }
 
@@ -723,6 +758,7 @@
         document.getElementById('fetchAddress').value = '';
         updateFeeCalc();
         updateOutputPercentages();
+        updateStepLayout();
       } catch (err) {
         statusEl.textContent = 'Error: ' + err.message;
       }
@@ -900,6 +936,91 @@
         document.getElementById('fetchAddress').value = '';
         updateFeeCalc();
         updateOutputPercentages();
+        updateStepLayout();
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    async function fetchUtxosFromWif(wif) {
+      const statusEl = document.getElementById('fetchStatus');
+      const net = getSelectedNetwork();
+      const base = getMempoolBaseUrl();
+
+      let keyPair;
+      try {
+        keyPair = ECPair.fromWIF(wif, net);
+      } catch (e) {
+        statusEl.textContent = 'Invalid WIF for selected network.';
+        return;
+      }
+
+      // Clear WIF from input immediately
+      document.getElementById('fetchAddress').value = '';
+
+      const pubkey = Buffer.from(keyPair.publicKey);
+
+      // Derive both P2WPKH and P2TR addresses
+      const p2wpkhAddr = bitcoin.payments.p2wpkh({ pubkey, network: net }).address;
+      const p2trAddr = pubkeyToAddress(pubkey, 'p2tr', net);
+      const addresses = [
+        { addr: p2wpkhAddr, type: 'P2WPKH' },
+        { addr: p2trAddr, type: 'P2TR' },
+      ];
+
+      statusEl.textContent = 'Fetching UTXOs from WIF...';
+
+      try {
+        // Remove empty input rows
+        document.querySelectorAll('#utxoContainer [data-utxo]').forEach(row => {
+          const txid = row.querySelector('input').value.trim();
+          if (!txid) row.remove();
+        });
+
+        let totalUtxoCount = 0;
+        let totalSatsFound = 0;
+        const allTxids = new Set();
+
+        for (const { addr, type } of addresses) {
+          statusEl.textContent = `Fetching ${type} UTXOs...`;
+          const resp = await fetch(`${base}/address/${addr}/utxo`);
+          if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+          const utxos = await resp.json();
+
+          if (utxos.length > 0) {
+            const scriptPubKey = Buffer.from(
+              bitcoin.address.toOutputScript(addr, net)
+            ).toString('hex');
+
+            const totalSats = utxos.reduce((sum, u) => sum + u.value, 0);
+            const totalBtc = (totalSats / 1e8).toFixed(8).replace(/\.?0+$/, '');
+            const label = document.createElement('div');
+            label.className = 'utxo-source-label';
+            label.innerHTML = `From: ${addr} (${type}) <span style="float:right;color:#f7931a;font-weight:bold;">${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})</span>`;
+            document.getElementById('utxoContainer').appendChild(label);
+
+            for (const utxo of utxos) {
+              addFetchedInput(utxo.txid, utxo.vout, utxo.value, scriptPubKey, addr, null, wif);
+              allTxids.add(utxo.txid);
+              totalUtxoCount++;
+              totalSatsFound += utxo.value;
+            }
+          }
+        }
+
+        if (totalUtxoCount === 0) {
+          statusEl.textContent = 'No UTXOs found for this WIF.';
+          return;
+        }
+
+        statusEl.textContent = `Found ${totalUtxoCount} UTXO(s). Fetching full transactions...`;
+        await Promise.allSettled(Array.from(allTxids).map(txid => fetchRawTx(txid)));
+
+        const totalBtc = (totalSatsFound / 1e8).toFixed(8).replace(/\.?0+$/, '');
+        statusEl.textContent = `Added ${totalUtxoCount} UTXO(s) (${totalBtc} BTC) from WIF.`;
+        updateFeeCalc();
+        updateOutputPercentages();
+        updateStepLayout();
       } catch (err) {
         statusEl.textContent = 'Error: ' + err.message;
       }
@@ -1049,6 +1170,82 @@
       catch { return false; }
     }
 
+    function isWif(input) {
+      try { ECPair.fromWIF(input, getSelectedNetwork()); return true; } catch { return false; }
+    }
+
+    function allUtxosHaveWif() {
+      const rows = document.querySelectorAll('#utxoContainer [data-utxo]');
+      if (rows.length === 0) return false;
+      return Array.from(rows).every(row => row.getAttribute('data-wif'));
+    }
+
+    function someUtxosHaveWif() {
+      const rows = document.querySelectorAll('#utxoContainer [data-utxo]');
+      if (rows.length === 0) return false;
+      const withWif = Array.from(rows).filter(row => row.getAttribute('data-wif'));
+      return withWif.length > 0 && withWif.length < rows.length;
+    }
+
+    // Step indicator wizard functions
+    function setStep(n) {
+      document.querySelectorAll('.step-indicator .step').forEach(el => {
+        const stepNum = parseInt(el.getAttribute('data-step'));
+        el.classList.remove('active', 'done');
+        if (stepNum < n) el.classList.add('done');
+        else if (stepNum === n) el.classList.add('active');
+      });
+    }
+
+    function showCard(id) {
+      ['cardCreate', 'cardSign', 'cardBroadcast'].forEach(c => {
+        document.getElementById(c).classList.add('hidden');
+      });
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    function updateStepLayout() {
+      const indicator = document.getElementById('stepIndicator');
+      const wifMode = allUtxosHaveWif();
+      const steps = indicator.querySelectorAll('.step');
+      const lines = indicator.querySelectorAll('.step-line');
+
+      if (wifMode) {
+        // 2-step mode: Create → Broadcast
+        steps[0].querySelector('small').textContent = 'Create';
+        steps[1].querySelector('small').textContent = 'Broadcast';
+        steps[1].setAttribute('data-step', '2');
+        steps[1].style.display = '';
+        lines[0].style.display = '';
+        // Hide steps 3 and 4
+        steps[2].style.display = 'none';
+        lines[1].style.display = 'none';
+        steps[3].style.display = 'none';
+        lines[2].style.display = 'none';
+      } else {
+        // 4-step mode: Create → Sign → Combine → Broadcast
+        steps[0].querySelector('small').textContent = 'Create';
+        steps[1].querySelector('small').textContent = 'Sign';
+        steps[1].setAttribute('data-step', '2');
+        steps[1].style.display = '';
+        lines[0].style.display = '';
+        steps[2].querySelector('small').textContent = 'Combine';
+        steps[2].style.display = '';
+        lines[1].style.display = '';
+        steps[3].style.display = '';
+        lines[2].style.display = '';
+      }
+
+      // Update Create button text
+      const createBtn = document.getElementById('createPsbt');
+      createBtn.textContent = wifMode ? 'Create, Sign & Finalize'
+        : someUtxosHaveWif() ? 'Create & Partially Sign PSBT'
+        : 'Create PSBT';
+
+      // Reset to step 1
+      setStep(1);
+    }
+
 
     function addInput(_, txid = '', vout = '', value = '', scriptPubKey = '') {
       const div = document.createElement('div');
@@ -1090,6 +1287,14 @@
             <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
           </div>
         </div>
+        <!-- Collapsible WIF private key -->
+        <span class="wif-toggle">WIF private key ▸</span>
+        <div class="wif-fields">
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="grow wif-key" placeholder="WIF private key (e.g. 5J..., K..., L..., c...)"
+                   style="font-family:'Courier New',monospace;font-size:0.82rem;">
+          </div>
+        </div>
       `;
 
       document.getElementById('utxoContainer').appendChild(div);
@@ -1097,7 +1302,8 @@
       // delete button handler
       div.querySelector('.remove').addEventListener('click', () => {
         div.remove();
-        updateFeeCalc();        // keep fee label correct
+        updateFeeCalc();
+        updateStepLayout();
       });
 
       // HW wallet info toggle
@@ -1106,6 +1312,35 @@
       toggle.addEventListener('click', () => {
         const open = hwFields.classList.toggle('open');
         toggle.textContent = open ? 'HW wallet info ▾' : 'HW wallet info ▸';
+      });
+
+      // WIF private key toggle + data-wif tracking
+      const wifToggle = div.querySelector('.wif-toggle');
+      const wifFields = div.querySelector('.wif-fields');
+      const wifInput = div.querySelector('.wif-key');
+      wifToggle.addEventListener('click', () => {
+        const open = wifFields.classList.toggle('open');
+        const wifPrefix = div.getAttribute('data-wif') ? '\u2714\uFE0F ' : '';
+        wifToggle.textContent = wifPrefix + (open ? 'WIF private key \u25be' : 'WIF private key \u25b8');
+      });
+      wifInput.addEventListener('input', () => {
+        const wif = wifInput.value.trim();
+        if (wif) {
+          try {
+            ECPair.fromWIF(wif, getSelectedNetwork());
+            div.setAttribute('data-wif', wif);
+            wifToggle.textContent = '\u2714\uFE0F WIF private key \u25b8';
+            wifFields.classList.remove('open');
+            colourField(wifInput, true);
+          } catch {
+            div.removeAttribute('data-wif');
+            colourField(wifInput, false);
+          }
+        } else {
+          div.removeAttribute('data-wif');
+          wifToggle.textContent = 'WIF private key \u25b8';
+        }
+        updateStepLayout();
       });
 
       // Auto-derive pubkey from xpub + path
@@ -1155,9 +1390,10 @@
 
 
 
-    function addFetchedInput(txid, vout, value, scriptPubKey, address, hwInfo = null) {
+    function addFetchedInput(txid, vout, value, scriptPubKey, address, hwInfo = null, wif = null) {
       const div = document.createElement('div');
       div.setAttribute('data-utxo', '');
+      if (wif) div.setAttribute('data-wif', wif);
       div.className = 'utxo-fetched';
 
       const shortTxid = txid.slice(0, 10) + '\u2026' + txid.slice(-6);
@@ -1189,6 +1425,13 @@
             <input class="grow hw-pubkey" placeholder="Public key (66 hex, compressed)">
           </div>
         </div>
+        <span class="wif-toggle">WIF private key \u25b8</span>
+        <div class="wif-fields">
+          <div class="row" style="margin-top:0.3rem;">
+            <input class="grow wif-key" placeholder="WIF private key" readonly
+                   style="font-family:'Courier New',monospace;font-size:0.82rem;">
+          </div>
+        </div>
       `;
 
       document.getElementById('utxoContainer').appendChild(div);
@@ -1196,6 +1439,7 @@
       div.querySelector('.remove').addEventListener('click', () => {
         div.remove();
         updateFeeCalc();
+        updateStepLayout();
       });
 
       const toggle = div.querySelector('.hw-toggle');
@@ -1216,6 +1460,21 @@
       toggle.addEventListener('click', () => {
         const open = hwFields.classList.toggle('open');
         toggle.textContent = hwPrefix + (open ? 'HW wallet info \u25be' : 'HW wallet info \u25b8');
+      });
+
+      // WIF toggle + pre-population
+      const wifToggle = div.querySelector('.wif-toggle');
+      const wifFieldsDiv = div.querySelector('.wif-fields');
+      const wifInput = div.querySelector('.wif-key');
+      const wifPrefix = wif ? '\u2714\uFE0F ' : '';
+      if (wif) {
+        wifInput.value = wif;
+        wifToggle.textContent = wifPrefix + 'WIF private key \u25b8';
+      }
+      wifToggle.addEventListener('click', () => {
+        const open = wifFieldsDiv.classList.toggle('open');
+        const currentWifPrefix = div.getAttribute('data-wif') ? '\u2714\uFE0F ' : '';
+        wifToggle.textContent = currentWifPrefix + (open ? 'WIF private key \u25be' : 'WIF private key \u25b8');
       });
 
       // Auto-derive pubkey from xpub + path
@@ -1552,7 +1811,8 @@
         // Attempt to fetch any missing raw transactions for nonWitnessUtxo
         await fetchAllNonWitnessUtxos().catch(() => {});
 
-        const utxos = Array.from(document.querySelectorAll('#utxoContainer [data-utxo]')).map(row => {
+        const utxoRows = Array.from(document.querySelectorAll('#utxoContainer [data-utxo]'));
+        const utxos = utxoRows.map(row => {
           const inputs = row.querySelectorAll('input');
           const [txidInput, voutInput, valueInput, scriptInput] = inputs;
           const xfpInput = row.querySelector('.hw-xfp');
@@ -1587,14 +1847,84 @@
         document.getElementById('feeCalc').textContent = `Transaction fee: ${fee} sats`;
 
         lastPsbt = psbt;
+
+        // WIF inline signing mode
+        if (allUtxosHaveWif()) {
+          // Sign each input with its WIF
+          let signed = 0;
+          for (let i = 0; i < utxoRows.length; i++) {
+            const wifVal = utxoRows[i].getAttribute('data-wif');
+            if (!wifVal) continue;
+            try {
+              const kp = ECPair.fromWIF(wifVal, net);
+              psbt.signInput(i, kp);
+              signed++;
+            } catch (e) { /* skip inputs that don't match this key */ }
+          }
+
+          psbt.finalizeAllInputs();
+          finalPsbt = psbt;
+          finalTxHex = psbt.extractTransaction().toHex();
+
+          document.getElementById('psbtResult').style.display = 'none';
+          document.getElementById('wifSignResult').style.display = '';
+          document.getElementById('wifSignedTxHex').textContent = finalTxHex;
+
+          // Jump to broadcast
+          document.getElementById('broadcastHeading').textContent = '2. Broadcast Transaction';
+          setStep(2);
+          showCard('cardBroadcast');
+          return;
+        }
+
+        // Normal mode: partial WIF signing then show download/QR
+        for (let i = 0; i < utxoRows.length; i++) {
+          const wifVal = utxoRows[i].getAttribute('data-wif');
+          if (!wifVal) continue;
+          try {
+            const kp = ECPair.fromWIF(wifVal, net);
+            psbt.signInput(i, kp);
+          } catch (e) { /* skip non-matching */ }
+        }
         document.getElementById('psbtHex').textContent = Buffer.from(psbt.toBuffer()).toString('hex');
         document.getElementById('qrDisplay').style.display = 'none';
         if (window._qrInterval) { clearInterval(window._qrInterval); window._qrInterval = null; }
+        document.getElementById('wifSignResult').style.display = 'none';
         document.getElementById('psbtResult').style.display = '';
       } catch (e) {
         alert('Error creating PSBT: ' + e.message);
       }
     };
+
+    // Navigation: Next to Sign step
+    document.getElementById('nextToSign').addEventListener('click', () => {
+      setStep(2);
+      showCard('cardSign');
+    });
+
+    // Navigation: Back to Create
+    document.getElementById('backToCreate').addEventListener('click', () => {
+      setStep(1);
+      showCard('cardCreate');
+    });
+
+    // Navigation: Back from Broadcast
+    document.getElementById('backToSign').addEventListener('click', () => {
+      if (allUtxosHaveWif()) {
+        setStep(1);
+        showCard('cardCreate');
+      } else {
+        setStep(2);
+        showCard('cardSign');
+      }
+    });
+
+    // Navigation: Next to Broadcast after Combine
+    document.getElementById('nextToBroadcast').addEventListener('click', () => {
+      const wifMode = allUtxosHaveWif();
+      setStep(wifMode ? 2 : 4);
+      showCard('cardBroadcast');
+    });
 
 
     // File input: add to accumulator on selection
@@ -1646,6 +1976,10 @@
         document.getElementById('combinedResult').innerText = finalTxHex;
         psbtAccumulator.length = 0;
         renderPsbtList();
+        // Navigate to broadcast step
+        document.getElementById('broadcastHeading').textContent = '3. Broadcast Transaction';
+        setStep(3);
+        showCard('cardBroadcast');
       } catch (e) {
         alert("Error combining/finalizing PSBTs: " + e.message);
       }
@@ -1713,7 +2047,7 @@
       const val = fetchAddrInput.value.trim();
       if (!val) { colourField(fetchAddrInput, false); return; }
       const net = getSelectedNetwork();
-      const valid = validateBitcoinAddress(val, net) || isExtendedKey(val);
+      const valid = validateBitcoinAddress(val, net) || isExtendedKey(val) || isWif(val);
       colourField(fetchAddrInput, valid);
     });
 
@@ -1742,7 +2076,8 @@
       const fa = document.getElementById('fetchAddress');
       if (fa.value.trim()) {
         const net = getSelectedNetwork();
-        colourField(fa, validateBitcoinAddress(fa.value.trim(), net));
+        const v = fa.value.trim();
+        colourField(fa, validateBitcoinAddress(v, net) || isExtendedKey(v) || isWif(v));
       }
     });
 
@@ -1786,6 +2121,8 @@
     const defaultWipe = document.querySelector('#outputContainer [data-output] .output-wipe');
     if (defaultWipe) { defaultWipe.checked = true; handleWipeToggle(defaultWipe.closest('[data-output]')); }
 
+    // Initialize step layout
+    updateStepLayout();
 
     // Test hook — expose internal functions for automated testing
     if (window.__TEST_MODE__) {
@@ -1805,6 +2142,10 @@
         addPsbtToList, removePsbtFromList, renderPsbtList,
         handleScannedQR, handleBBQrPart,
         startQrScanner, stopQrScanner,
+        // WIF support
+        isWif, fetchUtxosFromWif, allUtxosHaveWif, someUtxosHaveWif,
+        // Step wizard
+        setStep, showCard, updateStepLayout,
         get psbtAccumulator() { return psbtAccumulator; },
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },
@@ -1812,6 +2153,7 @@
       window._bitcoin = bitcoin;
       window._Buffer = Buffer;
       window._ecc = ecc;
+      window._ECPair = ECPair;
     }
   </script>
 </body>

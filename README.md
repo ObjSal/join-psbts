@@ -63,11 +63,15 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- 111 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 140 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
-# E2E regtest tests -- 99 tests, requires bitcoind + bitcoin-cli (~90s)
-# Covers P2WPKH + P2TR (Taproot), parallel + serial signing
+# Unit tests -- sign.html, 48 tests, no bitcoind needed (~15s)
+python3 tests/test_sign_html.py
+
+# E2E regtest tests -- 128 tests, requires bitcoind + bitcoin-cli (~120s)
+# Covers P2WPKH + P2TR (Taproot), parallel + serial signing,
+# plus sign.html E2E flow (create PSBT → sign with WIF → finalize → broadcast)
 python3 tests/test_regtest_e2e.py
 
 # E2E testnet4 tests -- 27 tests, requires funded testnet4 wallet (~30s)
@@ -75,6 +79,8 @@ python3 tests/test_regtest_e2e.py
 python3 tests/test_testnet4_e2e.py
 
 # E2E with visible browser
+python3 tests/test_sign_html.py --headed
+python3 tests/test_psbt_builder.py --headed
 python3 tests/test_regtest_e2e.py --headed
 python3 tests/test_testnet4_e2e.py --headed
 

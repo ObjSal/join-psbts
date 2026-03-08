@@ -1015,6 +1015,247 @@ def run_tests(page, base_url, cli, server_url):
 
     shutil.rmtree(tmp_trs, ignore_errors=True)
 
+    # ================================================================
+    #  PART E — P2WPKH via sign.html (Hot Wallet Transaction Signer)
+    # ================================================================
+
+    sign_url = f"{server_url}/sign.html"
+
+    # ========================================================
+    section("26. Generate P2WPKH Keypair & Fund (sign.html)")
+    # ========================================================
+
+    # Generate keypair in browser on sign.html (which has ECPair loaded)
+    page.goto(f"{sign_url}?network=regtest&serverMode=true")
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    kp_p2wpkh = page.evaluate("""() => {
+        const net = window._fn.getSelectedNetwork();
+        const kp = window._ECPair.makeRandom({ network: net });
+        const { address } = window._bitcoin.payments.p2wpkh({
+            pubkey: kp.publicKey, network: net
+        });
+        return { wif: kp.toWIF(), address: address };
+    }""")
+
+    test("sign.html p2wpkh: keypair generated",
+         kp_p2wpkh.get("wif") is not None and kp_p2wpkh.get("address") is not None)
+    test("sign.html p2wpkh: address is bcrt1q",
+         kp_p2wpkh["address"].startswith("bcrt1q"),
+         f"got {kp_p2wpkh['address']}")
+
+    # Fund the generated address
+    E_FUND = "0.5"
+    E_FUND_SATS = 50_000_000
+    E_SEND = 49_900_000     # 0.5 BTC minus 0.001 BTC fee
+
+    res_e = api_post(server_url, "/api/faucet",
+                     {"address": kp_p2wpkh["address"], "amount": E_FUND})
+    test("sign.html p2wpkh: faucet funded", res_e.get("success") is True)
+
+    # Create a recipient address
+    addr_e_recip = cli.run("getnewaddress", "", "bech32", wallet="wallet_recipient")
+    test("sign.html p2wpkh: recipient address valid",
+         addr_e_recip.startswith("bcrt1q"), f"got {addr_e_recip}")
+
+    # ========================================================
+    section("27. Create PSBT in index.html (sign.html P2WPKH)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
+    page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    page.fill("#fetchAddress", kp_p2wpkh["address"])
+    page.click("#fetchUtxosBtn")
+    page.wait_for_function(
+        "() => document.getElementById('fetchStatus').textContent.includes('Added')",
+        timeout=15000)
+    status_e = page.text_content("#fetchStatus")
+    test("sign.html p2wpkh: UTXOs fetched", "Added 1 UTXO" in status_e,
+         f"got: {status_e}")
+
+    test("sign.html p2wpkh: 1 input row",
+         len(page.query_selector_all("[data-utxo]")) == 1)
+
+    page.fill("#feeRate", "1")
+    page.evaluate(f"""() => {{
+        window._fn.addOutput(null, "{addr_e_recip}", {E_SEND});
+    }}""")
+
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+
+    all_dialogs.clear()
+    page.click("#createPsbt")
+    page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
+    with page.expect_download(timeout=30000) as download_info:
+        page.click("#downloadPsbt")
+    dl_e = download_info.value
+
+    test("sign.html p2wpkh: no error on create",
+         all(("error" not in d.lower()) for d in all_dialogs),
+         f"got: {all_dialogs}")
+
+    e_psbt_path = dl_e.path()
+    with open(e_psbt_path, "rb") as f:
+        e_psbt_bin = f.read()
+    test("sign.html p2wpkh: PSBT has magic header",
+         e_psbt_bin[:5] == b"psbt\xff")
+    test("sign.html p2wpkh: PSBT downloaded",
+         len(e_psbt_bin) > 0, f"size={len(e_psbt_bin)}")
+
+    # ========================================================
+    section("28. Load PSBT in sign.html (P2WPKH)")
+    # ========================================================
+
+    page.goto(f"{sign_url}?network=regtest&serverMode=true")
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Upload the PSBT file
+    page.set_input_files("#psbtFileInput", [e_psbt_path])
+    page.wait_for_selector("#psbtInfo", state="visible", timeout=10000)
+
+    psbt_info = page.text_content("#psbtInfo")
+    test("sign.html p2wpkh: PSBT info displayed",
+         psbt_info is not None and len(psbt_info) > 0)
+    test("sign.html p2wpkh: shows 1 input", "Inputs: 1" in psbt_info,
+         f"got: {psbt_info}")
+    test("sign.html p2wpkh: shows 1 output", "Outputs: 1" in psbt_info,
+         f"got: {psbt_info}")
+    test("sign.html p2wpkh: sign button enabled",
+         page.is_enabled("#signBtn"))
+    test("sign.html p2wpkh: PSBT loaded in state",
+         page.evaluate("() => window._fn.loadedPsbt !== null"))
+
+    # ========================================================
+    section("29. Sign with WIF in sign.html (P2WPKH)")
+    # ========================================================
+
+    page.fill("#wifInput", kp_p2wpkh["wif"])
+    page.locator("#wifInput").dispatch_event("input")
+    page.wait_for_timeout(1000)
+
+    # Check derived address matches
+    derived = page.text_content("#derivedAddr")
+    test("sign.html p2wpkh: derived address shown",
+         derived is not None and kp_p2wpkh["address"] in derived,
+         f"got: {derived}")
+
+    # Sign
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+    all_dialogs.clear()
+    page.click("#signBtn")
+    page.wait_for_timeout(2000)
+
+    sign_result = page.text_content("#signResult")
+    test("sign.html p2wpkh: signed successfully",
+         sign_result is not None and "Signed" in sign_result,
+         f"got: {sign_result}")
+    test("sign.html p2wpkh: signed 1 of 1",
+         "1 of 1" in (sign_result or ""),
+         f"got: {sign_result}")
+
+    # Output card visible
+    test("sign.html p2wpkh: output card visible",
+         page.is_visible("#outputCard"))
+
+    # Download signed PSBT
+    with page.expect_download(timeout=10000) as dl_signed:
+        page.click("#downloadBtn")
+    e_signed_dl = dl_signed.value
+
+    e_signed_path = e_signed_dl.path()
+    with open(e_signed_path, "rb") as f:
+        e_signed_bin = f.read()
+    test("sign.html p2wpkh: signed PSBT downloaded",
+         e_signed_bin[:5] == b"psbt\xff" and len(e_signed_bin) > len(e_psbt_bin),
+         f"unsigned={len(e_psbt_bin)}, signed={len(e_signed_bin)}")
+
+    # ========================================================
+    section("30. Finalize in index.html (sign.html P2WPKH)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+    page.wait_for_function("() => window._fn.serverMode === true", timeout=10000)
+    page.select_option("#network", "regtest")
+
+    all_dialogs = []
+    page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
+
+    all_dialogs.clear()
+    page.set_input_files("#psbtFiles", [e_signed_path])
+    page.click("#combinePsbt")
+    page.wait_for_timeout(3000)
+
+    test("sign.html p2wpkh: no error on finalize", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    e_hex = (page.text_content("#combinedResult") or "").strip()
+    test("sign.html p2wpkh: finalized hex present",
+         len(e_hex) > 0 and re.match(r'^[0-9a-fA-F]+$', e_hex) is not None,
+         f"length={len(e_hex)}")
+
+    # Decoded tx sanity: starts with version bytes
+    test("sign.html p2wpkh: valid tx hex (starts with 01 or 02)",
+         e_hex[:2] in ("01", "02"),
+         f"starts with {e_hex[:2]}")
+
+    # ========================================================
+    section("31. Broadcast & Verify (sign.html P2WPKH)")
+    # ========================================================
+
+    all_dialogs.clear()
+    page.click("#broadcastTx")
+    page.wait_for_timeout(3000)
+
+    test("sign.html p2wpkh: no error on broadcast", len(all_dialogs) == 0,
+         f"got: {all_dialogs}")
+
+    e_bcast = page.text_content("#broadcastResult")
+    test("sign.html p2wpkh: broadcast shows TXID",
+         e_bcast is not None and "Broadcasted TXID:" in e_bcast,
+         f"got: {e_bcast}")
+
+    e_txid_match = re.search(r'[a-f0-9]{64}', e_bcast or "")
+    test("sign.html p2wpkh: TXID valid", e_txid_match is not None)
+    e_txid = e_txid_match.group(0) if e_txid_match else ""
+
+    if not e_txid:
+        test("SKIP: sign.html p2wpkh on-chain verification", False,
+             "broadcast failed")
+    else:
+        try:
+            api_post(server_url, "/api/mine", {"blocks": 1})
+        except Exception:
+            pass
+
+        decoded_e = cli.run_json("getrawtransaction", e_txid, "true")
+        test("sign.html p2wpkh: transaction confirmed",
+             decoded_e.get("confirmations", 0) >= 1,
+             f"confirmations={decoded_e.get('confirmations', 0)}")
+        test("sign.html p2wpkh: 1 input",
+             len(decoded_e.get("vin", [])) == 1,
+             f"got {len(decoded_e.get('vin', []))}")
+        test("sign.html p2wpkh: 1 output",
+             len(decoded_e.get("vout", [])) == 1,
+             f"got {len(decoded_e.get('vout', []))}")
+        test("sign.html p2wpkh: output amount correct",
+             round(decoded_e["vout"][0]["value"] * 1e8) == E_SEND,
+             f"expected {E_SEND}, got {round(decoded_e['vout'][0]['value'] * 1e8)}")
+
+    # Note: P2TR (Taproot) via sign.html is not tested here because
+    # bitcoinjs-lib v7's psbt.signInput() requires a tweaked signer for
+    # taproot key-path spending, which sign.html's current ECPair-based
+    # signing doesn't handle. P2TR signing via bitcoin-cli (walletprocesspsbt)
+    # is fully tested in Parts C and D above.
+
 
 # ============================================================
 # Main

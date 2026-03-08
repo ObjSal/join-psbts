@@ -29,10 +29,11 @@ Both approaches work through the same Combine & Finalize step.
 - **Fetch UTXOs** by address, extended public key (xpub/zpub/vpub/tpub/ypub/upub), or WIF private key from mempool.space (or local regtest server) -- xpub input auto-derives P2WPKH and/or P2TR addresses and scans receive + change chains with BIP44 gap limit; WIF input derives both P2WPKH and P2TR addresses and fetches UTXOs from both
 - **Inline signing** for hot/paper wallets -- when all UTXOs have WIF private keys, signs and finalizes the transaction in-browser without needing external signing tools, going straight from Create to Broadcast
 - **Fee rate presets** pulled live from the network (fast/medium/slow), with estimated fee and available sats display
+- **Optional tip** with preset percentages (0.99%, 0.5%, 0.1%) and per-network donation addresses -- included as a PSBT output only when sats > 0
 - **Output percentage labels** showing each output's share of total input, with a Wipe option to sweep remaining balance
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
 - **QR code scanning** to upload signed PSBTs from hardware wallets via camera, with BBQr multi-part support and progress bar -- combine QR-scanned and file-uploaded PSBTs from different sources
-- **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
+- **Hardware wallet support** with BIP32 derivation paths, master fingerprint input (per xpub source, auto-propagated to all UTXOs), and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
 - **CLI signing tool** (`tools/sign-psbt.py`) for hot wallet signing with WIF keys
 - **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
@@ -64,7 +65,7 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- index.html, 159 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 173 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
 # E2E regtest tests -- 145 tests, requires bitcoind + bitcoin-cli (~120s)

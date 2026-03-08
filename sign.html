@@ -325,7 +325,7 @@
           networkEl.value = 'regtest';
         } else if (isLocalhost) {
           networkEl.value = 'testnet';
-        } else {
+        } else if (!window.__TEST_MODE__) {
           const opt = document.querySelector('#network option[value="regtest"]');
           if (opt) opt.remove();
           networkEl.value = 'mainnet';
@@ -918,6 +918,25 @@
         window._qrInterval = setInterval(showNext, 250);
       }
     };
+
+    // ── Test hook ──────────────────────────────────────────
+    if (window.__TEST_MODE__) {
+      window._fn = {
+        getSelectedNetwork, loadPsbtFromBytes, clearState,
+        updateBackLink, extractWifFromData,
+        handleScannedQR, handleBBQrPart, renderQrToCanvas, hideQr,
+        get loadedPsbt() { return loadedPsbt; },
+        get loadedPsbtRaw() { return loadedPsbtRaw; },
+        get signedPsbt() { return signedPsbt; },
+        get serverMode() { return serverMode; },
+        set serverMode(v) { serverMode = v; },
+        get bbqrParts() { return bbqrParts; },
+      };
+      window._bitcoin = bitcoin;
+      window._Buffer = Buffer;
+      window._ecc = ecc;
+      window._ECPair = ECPair;
+    }
 
   </script>
 </body>

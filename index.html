@@ -142,7 +142,7 @@
     .card.hidden { display: none; }
     .fee-presets { display: flex; gap: 0.4rem; margin-top: 0.4rem; margin-bottom: 0.3rem; }
     .fee-presets button { width: auto; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
-    .fee-preset.active { background: var(--btc-orange); color: #fff; border-color: #e8850f; }
+    .fee-preset.active, .tip-preset.active { background: var(--btc-orange); color: #fff; border-color: #e8850f; }
     .utxo-source-label {
       font-size: 0.85rem; color: var(--text-secondary);
       background: rgba(247,147,26,0.08); padding: 0.3rem 0.6rem;
@@ -254,6 +254,27 @@
         </div>
         <input type="number" id="feeRate" placeholder="or enter custom sat/vB" style="max-width:280px;">
         <div id="feeCalc" style="margin-top:0.5rem;color:var(--text-secondary);"></div>
+      </div>
+    </div>
+
+    <div id="tipGroup" style="margin-top:1rem;">
+      <div style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;" id="tipToggle">
+        <h3 style="margin:0;">Tip</h3>
+        <span id="tipChevron" style="font-size:0.7rem;color:var(--text-secondary);transition:transform 0.2s;transform:rotate(-90deg);">&#9660;</span>
+        <span id="tipSummary" style="color:var(--text-secondary);font-size:0.85rem;"></span>
+      </div>
+      <div id="tipBody" style="display:none;">
+        <div class="fee-presets" id="tipPresets" style="margin-bottom:0.3rem;">
+          <button type="button" class="tip-preset btn-secondary active" data-pct="0.99">0.99%</button>
+          <button type="button" class="tip-preset btn-secondary" data-pct="0.5">0.5%</button>
+          <button type="button" class="tip-preset btn-secondary" data-pct="0.1">0.1%</button>
+          <button type="button" class="tip-preset btn-secondary" data-pct="0">No Tip</button>
+        </div>
+        <div class="row" style="align-items:center;">
+          <input type="text" id="tipAddress" value="bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8" readonly style="flex:1;color:var(--text-secondary);cursor:default;">
+          <input type="number" id="tipSats" placeholder="sats" style="width:120px;flex:0 0 120px;" min="0">
+        </div>
+        <p style="color:var(--text-secondary);font-size:0.75rem;margin-top:0.2rem;">Support this open-source project</p>
       </div>
     </div>
 
@@ -837,10 +858,27 @@
 
               const label = document.createElement('div');
               label.className = 'utxo-source-label';
+              label.setAttribute('data-xpub-source', '');
               const shortXpub = xpubStr.slice(0, 8) + '\u2026' + xpubStr.slice(-6);
               label.innerHTML = `From: ${shortXpub} (${addrType.type} ${chainLabel}) ` +
-                `<span style="float:right;color:#f7931a;font-weight:bold;">${chainBtc} BTC (${chainUtxoCount} UTXO${chainUtxoCount !== 1 ? 's' : ''})</span>`;
+                `<span style="float:right;color:#f7931a;font-weight:bold;">${chainBtc} BTC (${chainUtxoCount} UTXO${chainUtxoCount !== 1 ? 's' : ''})</span>` +
+                `<div style="margin-top:0.3rem;"><input class="xpub-xfp" placeholder="Master fingerprint (8 hex, e.g. aabbccdd)" ` +
+                `style="width:200px;font-size:0.82rem;padding:0.2rem 0.4rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:var(--text-primary);"></div>`;
               document.getElementById('utxoContainer').appendChild(label);
+
+              // Propagate fingerprint to all UTXOs under this label
+              const xfpInput = label.querySelector('.xpub-xfp');
+              xfpInput.addEventListener('input', () => {
+                const val = xfpInput.value.trim();
+                let el = label.nextElementSibling;
+                while (el && !el.classList.contains('utxo-source-label')) {
+                  if (el.hasAttribute('data-utxo')) {
+                    const hwXfp = el.querySelector('.hw-xfp');
+                    if (hwXfp) hwXfp.value = val;
+                  }
+                  el = el.nextElementSibling;
+                }
+              });
 
               for (const entry of found) {
                 const scriptPubKey = Buffer.from(
@@ -1252,6 +1290,7 @@
       // delete button handler
       div.querySelector('.remove').addEventListener('click', () => {
         div.remove();
+        removeOrphanedSourceLabels();
         updateFeeCalc();
         updateStepLayout();
       });
@@ -1340,6 +1379,28 @@
 
 
 
+    function removeOrphanedSourceLabels() {
+      const container = document.getElementById('utxoContainer');
+      container.querySelectorAll('.utxo-source-label').forEach(label => {
+        // Collect UTXOs between this label and the next label (or end)
+        const utxos = [];
+        let el = label.nextElementSibling;
+        while (el && !el.classList.contains('utxo-source-label')) {
+          if (el.hasAttribute('data-utxo')) utxos.push(el);
+          el = el.nextElementSibling;
+        }
+        if (utxos.length === 0) {
+          label.remove();
+        } else {
+          // Update total and count in label
+          const totalSats = utxos.reduce((s, u) => s + (+u.querySelectorAll('input')[2].value || 0), 0);
+          const totalBtc = (totalSats / 1e8).toFixed(8).replace(/\.?0+$/, '');
+          const span = label.querySelector('span');
+          if (span) span.innerHTML = `${totalBtc} BTC (${utxos.length} UTXO${utxos.length !== 1 ? 's' : ''})`;
+        }
+      });
+    }
+
     function addFetchedInput(txid, vout, value, scriptPubKey, address, hwInfo = null, wif = null) {
       const div = document.createElement('div');
       div.setAttribute('data-utxo', '');
@@ -1388,6 +1449,7 @@
 
       div.querySelector('.remove').addEventListener('click', () => {
         div.remove();
+        removeOrphanedSourceLabels();
         updateFeeCalc();
         updateStepLayout();
       });
@@ -1487,27 +1549,50 @@
 
     // ── output percentage / wipe helpers ─────────────────────────
 
+    function getTipOutputCount() {
+      return (parseInt(document.getElementById('tipSats').value) || 0) > 0 ? 1 : 0;
+    }
+
     function getAvailableSats() {
       const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
         .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
       const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
       if (!feeRateSat || totalIn === 0) return totalIn;
       const nIn  = document.querySelectorAll('[data-utxo]').length;
-      const nOut = Math.max(1, document.querySelectorAll('[data-output]').length);
+      const nOut = Math.max(1, document.querySelectorAll('[data-output]').length) + getTipOutputCount();
       const roughVsize = Math.ceil(10.5 + 68 * nIn + 31 * nOut);
       const estFee = Math.ceil(feeRateSat * roughVsize);
       return Math.max(0, totalIn - estFee);
     }
 
     function gatherOutputs() {
-      return Array.from(document.querySelectorAll('#outputContainer [data-output]')).map(r => {
+      const outputs = Array.from(document.querySelectorAll('#outputContainer [data-output]')).map(r => {
         const addr = r.querySelector('.output-address').value.trim();
         const val  = parseInt(r.querySelector('.output-value').value) || 0;
         return { address: addr, value: val };
       }).filter(o => o.address && o.value > 0);
+      // Include tip output if > 0
+      const tipSats = parseInt(document.getElementById('tipSats').value) || 0;
+      const tipAddr = document.getElementById('tipAddress').value.trim();
+      if (tipSats > 0 && tipAddr) {
+        outputs.push({ address: tipAddr, value: tipSats });
+      }
+      return outputs;
+    }
+
+    function recalcTipIfPreset() {
+      const activeBtn = document.querySelector('.tip-preset.active');
+      if (!activeBtn) return;
+      const pct = parseFloat(activeBtn.dataset.pct);
+      const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
+        .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
+      const tipSats = Math.floor(totalIn * pct / 100);
+      document.getElementById('tipSats').value = tipSats || '';
+      updateTipSummary();
     }
 
     function updateOutputPercentages() {
+      recalcTipIfPreset();
       recalcWipeOutput();
       const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
         .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
@@ -1554,7 +1639,8 @@
         if (r === row) return;
         otherSum += parseInt(r.querySelector('.output-value').value) || 0;
       });
-      const wipeValue = Math.max(0, available - otherSum);
+      const tipSats = parseInt(document.getElementById('tipSats').value) || 0;
+      const wipeValue = Math.max(0, available - otherSum - tipSats);
       row.querySelector('.output-value').value = wipeValue;
     }
 
@@ -1778,6 +1864,13 @@
             pubkey: pubkeyInput ? pubkeyInput.value.trim() : '',
           };
         });
+        // Warn if any input has pubkey+path but no master fingerprint
+        const missingXfp = utxos.filter(u => u.pubkey && u.derivationPath && !u.xfp);
+        if (missingXfp.length > 0) {
+          const ok = confirm(`${missingXfp.length} input(s) have HW wallet info but no master fingerprint. Your hardware wallet may not recognize these inputs.\n\nContinue anyway?`);
+          if (!ok) return;
+        }
+
         const feeRateVal = parseFloat(document.getElementById('feeRate').value);
         if (!feeRateVal || feeRateVal <= 0) return alert('Enter a fee rate.');
 
@@ -1999,6 +2092,49 @@
       feeRateChevron.style.transform = isOpen ? 'rotate(-90deg)' : '';
     });
 
+    // Tip collapsible toggle
+    const tipToggle = document.getElementById('tipToggle');
+    const tipBody = document.getElementById('tipBody');
+    const tipSummaryEl = document.getElementById('tipSummary');
+    const tipChevron = document.getElementById('tipChevron');
+    tipToggle.addEventListener('click', () => {
+      const isOpen = tipBody.style.display !== 'none';
+      tipBody.style.display = isOpen ? 'none' : '';
+      tipSummaryEl.style.display = isOpen ? '' : 'none';
+      tipChevron.style.transform = isOpen ? 'rotate(-90deg)' : '';
+    });
+
+    // Tip preset buttons
+    function updateTipSats() {
+      recalcTipIfPreset();
+      updateOutputPercentages();
+    }
+
+    function updateTipSummary() {
+      const tipSats = parseInt(document.getElementById('tipSats').value) || 0;
+      const totalIn = Array.from(document.querySelectorAll('[data-utxo]'))
+        .reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
+      if (tipSats > 0) {
+        const pct = totalIn > 0 ? (tipSats / totalIn * 100).toFixed(2) : '0.00';
+        tipSummaryEl.textContent = `${tipSats} sats | ${pct}%`;
+      } else {
+        tipSummaryEl.textContent = 'No tip';
+      }
+    }
+
+    document.querySelectorAll('.tip-preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tip-preset').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateTipSats();
+      });
+    });
+    document.getElementById('tipSats').addEventListener('input', () => {
+      document.querySelectorAll('.tip-preset').forEach(b => b.classList.remove('active'));
+      updateTipSummary();
+      updateOutputPercentages();
+    });
+
     // Fetch fee rates on load
     fetchFeeRates();
 
@@ -2029,11 +2165,23 @@
     }
     updateBroadcastLabel();
 
+    const TIP_ADDRESSES = {
+      mainnet: 'bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8',
+      testnet: 'tb1q2ylq48ne37ng9clds23xjcrxp8hmn707j5vpyk',
+      regtest: 'bcrt1qrx4ree6dujheqmpd62cnws9zs0eak8v7vtuhv9',
+    };
+
+    function updateTipAddress() {
+      const net = document.getElementById('network').value;
+      document.getElementById('tipAddress').value = TIP_ADDRESSES[net] || TIP_ADDRESSES.mainnet;
+    }
+
     document.getElementById('network').addEventListener('change', () => {
       rawTxCache.clear();
       refreshAllScriptLabels();
       fetchFeeRates().catch(() => {});
       updateBroadcastLabel();
+      updateTipAddress();
       // Re-validate fetch address
       const fa = document.getElementById('fetchAddress');
       if (fa.value.trim()) {
@@ -2048,7 +2196,7 @@
       const feeRateSat = parseFloat(document.getElementById('feeRate').value) || 0;
       const utxos = document.querySelectorAll('[data-utxo]');
       const nIn   = utxos.length;
-      const nOut  = Math.max(1, document.querySelectorAll('[data-output]').length);
+      const nOut  = Math.max(1, document.querySelectorAll('[data-output]').length) + getTipOutputCount();
       const totalIn = Array.from(utxos).reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
 
       let feeText = '';
@@ -2058,7 +2206,8 @@
         estFee = Math.ceil(feeRateSat * roughVsize);
         const available = Math.max(0, totalIn - estFee);
         const totalOut = Array.from(document.querySelectorAll('#outputContainer [data-output]'))
-          .reduce((s, r) => s + (parseInt(r.querySelector('.output-value').value) || 0), 0);
+          .reduce((s, r) => s + (parseInt(r.querySelector('.output-value').value) || 0), 0)
+          + (parseInt(document.getElementById('tipSats').value) || 0);
         const remaining = Math.max(0, totalIn - totalOut);
         const remainPct = totalIn > 0 ? (remaining / totalIn * 100).toFixed(2) : '0.00';
         feeText = `Estimated fee: ${estFee} sats (${roughVsize} vB) | Available: ${remaining} sats (${remainPct}%)`;
@@ -2105,8 +2254,9 @@
     const defaultWipe = document.querySelector('#outputContainer [data-output] .output-wipe');
     if (defaultWipe) { defaultWipe.checked = true; handleWipeToggle(defaultWipe.closest('[data-output]')); }
 
-    // Initialize step layout
+    // Initialize step layout and tip visibility
     updateStepLayout();
+    updateTipAddress();
 
     // Test hook — expose internal functions for automated testing
     if (window.__TEST_MODE__) {
@@ -2128,6 +2278,9 @@
         startQrScanner, stopQrScanner,
         // WIF support
         isWif, fetchUtxosFromWif, allUtxosHaveWif, someUtxosHaveWif,
+        // Tip
+        updateTipSummary, recalcTipIfPreset, updateTipAddress, getTipOutputCount,
+        get TIP_ADDRESSES() { return TIP_ADDRESSES; },
         // Step wizard
         setStep, showCard, updateStepLayout,
         get psbtAccumulator() { return psbtAccumulator; },
@@ -2138,6 +2291,11 @@
       window._Buffer = Buffer;
       window._ecc = ecc;
       window._ECPair = ECPair;
+      // Expand collapsible sections for test access
+      document.getElementById('feeRateBody').style.display = '';
+      document.getElementById('feeRateChevron').style.transform = '';
+      document.getElementById('tipBody').style.display = '';
+      document.getElementById('tipChevron').style.transform = '';
     }
   </script>
 </body>

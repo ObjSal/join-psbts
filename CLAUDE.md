@@ -8,7 +8,7 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 - **`donate.html`** — Dark-themed donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 159 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, and dynamic step layout.
+- **`tests/test_psbt_builder.py`** — 173 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, dynamic step layout, and tip section.
 - **`tests/test_regtest_e2e.py`** — 145 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
@@ -55,6 +55,8 @@ The fetch input accepts both plain addresses and extended public keys (xpub/zpub
 **HW wallet info pre-population**: When UTXOs come from an xpub scan, `addFetchedInput()` receives an `hwInfo` parameter `{ xpub, path, pubkey }` that pre-fills the HW wallet fields. The section stays collapsed but shows a ✔️ prefix on the toggle text. The prefix is captured in a `hwPrefix` variable and used in both the initial set and the click handler so it persists through expand/collapse.
 
 **Derivation path**: For standard account-level xpubs (depth 3), the full path is constructed as `m/{purpose}'/{coinType}'/0'/{chain}/{index}`. For non-standard depths, only the relative path `{chain}/{index}` is stored.
+
+**Master fingerprint propagation**: Xpub source labels (`.utxo-source-label[data-xpub-source]`) include a `.xpub-xfp` input for the master fingerprint. On input, the value propagates to all `.hw-xfp` fields of UTXOs under that label via DOM sibling traversal. The master fingerprint cannot be derived from an xpub — it must be entered manually (e.g. Coldcard: Advanced > View Identity). At PSBT creation time, a `confirm()` warning appears if any input has pubkey + derivation path but no master fingerprint.
 
 **Network validation**: Mainnet xpubs are rejected when testnet/regtest is selected and vice versa.
 
@@ -109,15 +111,27 @@ bitcoinjs-lib only recognizes `'` (apostrophe) for hardened BIP32 path segments.
 Each output row has a value (sats) field, a small read-only percentage label below it, and a Wipe checkbox.
 - **Percentage label**: `updateOutputPercentages()` displays `sats / totalInput * 100` as a small `<small>` label below the sats input. Purely informational — not editable.
 - **Wipe output**: Only one output can have Wipe checked. The wipe row's value is auto-calculated as `available - sumOfOtherOutputs`. Its value field is disabled.
-- **Available sats**: `getAvailableSats()` returns `totalInput - estimatedFee` using rough vsize heuristic `ceil(10.5 + 68*nIn + 31*nOut)`.
-- **Fee rate required**: The fee rate field is always visible (no change mode toggle). Creating a PSBT requires a positive fee rate.
+- **Available sats**: `getAvailableSats()` returns `totalInput - estimatedFee` using rough vsize heuristic `ceil(10.5 + 68*nIn + 31*nOut)`. The `nOut` count includes the tip output when tip sats > 0 (via `getTipOutputCount()`).
+- **Fee rate required**: The fee rate field is collapsible with a chevron toggle and summary showing the current rate + estimated fee when collapsed.
+- **Wipe calculation**: `recalcWipeOutput()` subtracts tip sats from available balance when calculating wipe output value.
 - **Percentage warning**: If outputs don't sum to ~100% of available sats and no wipe output exists, a `confirm()` dialog warns the user. Leftover becomes extra miner fee.
+
+### Tip Section
+Collapsible section below Fee Rate with preset buttons and per-network donation addresses.
+
+- **Toggle**: Chevron + summary (e.g., "100 sats | 0.1%") when collapsed. Defaults to collapsed with 0.99% preset active.
+- **Presets**: `0.99%`, `0.5%`, `0.1%`, `No Tip` — clicking recalculates tip sats from total input. Active preset highlighted orange. Custom sats entry deselects all presets.
+- **Per-network addresses** (`TIP_ADDRESSES` map): mainnet (`bc1q...`), testnet (`tb1q...`), regtest (`bcrt1q...`). Updated via `updateTipAddress()` on network change.
+- **Integration**: `gatherOutputs()` appends tip as an additional output when sats > 0. `getTipOutputCount()` returns 0 or 1 for vsize estimation. `recalcTipIfPreset()` auto-recalculates tip when inputs change (called from `updateOutputPercentages()`).
+- **Summary**: `updateTipSummary()` shows sats + percentage in the collapsed header.
 
 ### Default Rows on Page Load
 One default empty output row is shown on page load. No default input rows — users click "+ Add Input (manual entry)" or use "Fetch & Add UTXOs".
 
 ### UTXO Container Selectors
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.
+
+`removeOrphanedSourceLabels()` cleans up source labels when UTXOs are removed. Called from both `addInput()` and `addFetchedInput()` remove handlers. When all UTXOs under a label are removed, the label is removed. When some remain, the label's total BTC and UTXO count are recalculated.
 
 ### Test Hook
 When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal functions are exposed on `window._fn`, the bitcoin library on `window._bitcoin`, and the ECC library on `window._ecc`. This also prevents regtest option removal when no server is detected. The test hook also exposes `window._ECPair` and `window._Buffer`.

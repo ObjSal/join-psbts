@@ -691,10 +691,15 @@ def run_tests(page, base_url):
     test("missing fee rate shows alert", len(_all_dialogs) > 0 and "fee" in _all_dialogs[-1].lower(),
          f"got {_all_dialogs}")
 
-    # No outputs
+    # No outputs (disable tip so only outputContainer matters)
     _all_dialogs.clear()
     page.fill("#feeRate", "10")
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate("""() => {
+        document.querySelectorAll('.tip-preset').forEach(b => b.classList.remove('active'));
+        document.querySelector('.tip-preset[data-pct="0"]').classList.add('active');
+        document.getElementById('tipSats').value = '';
+    }""")
     page.click("#createPsbt")
     time.sleep(1)
     test("no outputs shows alert", len(_all_dialogs) > 0 and "output" in _all_dialogs[-1].lower(),
@@ -1036,8 +1041,13 @@ def run_tests(page, base_url):
     val_disabled = page.evaluate("() => document.querySelector('[data-output]:last-child .output-value').disabled")
     test("unwipe: value enabled", not val_disabled)
 
-    # Test 9: gatherOutputs returns correct data
+    # Test 9: gatherOutputs returns correct data (disable tip to test base outputs only)
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+    page.evaluate("""() => {
+        document.querySelectorAll('.tip-preset').forEach(b => b.classList.remove('active'));
+        document.querySelector('.tip-preset[data-pct="0"]').classList.add('active');
+        document.getElementById('tipSats').value = '';
+    }""")
     page.evaluate(f"""() => {{
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 50000);
         window._fn.addOutput(null, "{MAINNET_P2WPKH}", 40000);
@@ -1504,6 +1514,87 @@ def run_tests(page, base_url):
 
     some_wif = page.evaluate("() => window._fn.someUtxosHaveWif()")
     test("mixed mode: someUtxosHaveWif() returns true", some_wif == True)
+
+    # ========================================================
+    section("34. Tip Section")
+    # ========================================================
+
+    # Reload for fresh state
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Default: 0.99% preset active
+    active_pct = page.evaluate("""() => {
+        const btn = document.querySelector('.tip-preset.active');
+        return btn ? btn.dataset.pct : null;
+    }""")
+    test("default tip preset is 0.99%", active_pct == "0.99", f"got {active_pct}")
+
+    # Tip address matches network (testnet on static server)
+    tip_addr = page.evaluate("() => document.getElementById('tipAddress').value")
+    expected_addr = page.evaluate("() => window._fn.TIP_ADDRESSES[document.getElementById('network').value]")
+    test("tip address matches network", tip_addr == expected_addr,
+         f"got '{tip_addr}' expected '{expected_addr}'")
+
+    # Tip sats = 0 when no UTXOs (0.99% of 0 = 0)
+    tip_sats = page.evaluate("() => document.getElementById('tipSats').value")
+    test("tip sats empty with no UTXOs", tip_sats == "", f"got '{tip_sats}'")
+
+    # Add UTXO → tip recalculates
+    page.evaluate(f"""() => {{
+        window._fn.addFetchedInput('a'.repeat(64), 0, 100000, '0014' + 'ab'.repeat(20),
+            'tb1qtest', null, null);
+        window._fn.updateOutputPercentages();
+    }}""")
+    tip_sats = page.evaluate("() => parseInt(document.getElementById('tipSats').value) || 0")
+    test("tip sats = 990 (0.99% of 100000)", tip_sats == 990, f"got {tip_sats}")
+
+    # Summary text shows tip info
+    summary = page.evaluate("() => document.getElementById('tipSummary').textContent")
+    test("tip summary contains sats", "990" in summary, f"got '{summary}'")
+
+    # Click 0.5% preset → recalculates
+    page.click(".tip-preset[data-pct='0.5']")
+    tip_sats = page.evaluate("() => parseInt(document.getElementById('tipSats').value) || 0")
+    test("0.5% preset: tip = 500", tip_sats == 500, f"got {tip_sats}")
+
+    # Click No Tip → clears sats
+    page.click(".tip-preset[data-pct='0']")
+    tip_sats = page.evaluate("() => document.getElementById('tipSats').value")
+    test("No Tip preset: sats empty", tip_sats == "", f"got '{tip_sats}'")
+
+    # getTipOutputCount returns 0 when no tip
+    count = page.evaluate("() => window._fn.getTipOutputCount()")
+    test("getTipOutputCount = 0 with no tip", count == 0, f"got {count}")
+
+    # Click 0.1% → tip output included in gatherOutputs
+    page.click(".tip-preset[data-pct='0.1']")
+    gathered = page.evaluate("() => window._fn.gatherOutputs()")
+    tip_outputs = [o for o in gathered if o["address"] == expected_addr]
+    test("gatherOutputs includes tip", len(tip_outputs) == 1, f"got {len(tip_outputs)}")
+    test("tip output value = 100", tip_outputs[0]["value"] == 100, f"got {tip_outputs[0]['value']}")
+
+    # getTipOutputCount returns 1 with tip
+    count = page.evaluate("() => window._fn.getTipOutputCount()")
+    test("getTipOutputCount = 1 with tip", count == 1, f"got {count}")
+
+    # Custom sats input deselects presets
+    page.fill("#tipSats", "250")
+    active = page.evaluate("() => document.querySelector('.tip-preset.active')")
+    test("custom sats deselects presets", active is None, f"got {active}")
+
+    # Network change updates tip address
+    page.select_option("#network", "mainnet")
+    time.sleep(1)
+    tip_addr = page.evaluate("() => document.getElementById('tipAddress').value")
+    test("mainnet tip address", tip_addr == "bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8",
+         f"got '{tip_addr}'")
+
+    page.select_option("#network", "regtest")
+    time.sleep(1)
+    tip_addr = page.evaluate("() => document.getElementById('tipAddress').value")
+    test("regtest tip address", tip_addr == "bcrt1qrx4ree6dujheqmpd62cnws9zs0eak8v7vtuhv9",
+         f"got '{tip_addr}'")
 
 
 # ============================================================

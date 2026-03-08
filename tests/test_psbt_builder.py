@@ -1369,6 +1369,171 @@ def run_tests(page, base_url):
     test("removePsbtFromList: decreases count", accum_len == 1)
 
 
+    # ========================================================
+    section("31. WIF Detection (isWif)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Select testnet for WIF tests (c/9 prefixes)
+    page.select_option("#network", "testnet")
+    time.sleep(2)
+
+    # Generate a testnet keypair and get WIF
+    test_wif = page.evaluate("""() => {
+        const kp = window._ECPair.makeRandom({ network: window._fn.getSelectedNetwork() });
+        return kp.toWIF();
+    }""")
+
+    # Valid testnet WIF → true
+    result = page.evaluate(f"() => window._fn.isWif('{test_wif}')")
+    test("isWif: valid testnet WIF", result == True, f"WIF={test_wif[:8]}...")
+
+    # xpub → false
+    result = page.evaluate("() => window._fn.isWif('tpubD6NzVbkrYhZ4XgiXtGrdW5XDZA5gE4REcKytCFfnQd6pXhbJA85')")
+    test("isWif: xpub returns false", result == False)
+
+    # address → false
+    result = page.evaluate("() => window._fn.isWif('tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx')")
+    test("isWif: address returns false", result == False)
+
+    # garbage → false
+    result = page.evaluate("() => window._fn.isWif('not-a-wif-at-all')")
+    test("isWif: garbage returns false", result == False)
+
+    # Mainnet WIF on testnet → false (network mismatch)
+    result = page.evaluate("() => window._fn.isWif('5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ')")
+    test("isWif: mainnet WIF on testnet returns false", result == False)
+
+
+    # ========================================================
+    section("32. Step Indicator Wizard")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Step indicator should exist
+    step_count = page.evaluate("() => document.querySelectorAll('.step-indicator .step').length")
+    test("step indicator: has 4 step circles", step_count == 4, f"got {step_count}")
+
+    # Step 1 should be active by default
+    step1_active = page.evaluate("() => document.querySelector('.step-indicator .step').classList.contains('active')")
+    test("step indicator: step 1 active by default", step1_active == True)
+
+    # Only Create card visible by default
+    create_visible = page.evaluate("() => !document.getElementById('cardCreate').classList.contains('hidden')")
+    sign_hidden = page.evaluate("() => document.getElementById('cardSign').classList.contains('hidden')")
+    broadcast_hidden = page.evaluate("() => document.getElementById('cardBroadcast').classList.contains('hidden')")
+    test("wizard: only Create card visible initially", create_visible and sign_hidden and broadcast_hidden)
+
+    # setStep(2) marks step 1 as done, step 2 as active
+    page.evaluate("() => window._fn.setStep(2)")
+    step1_done = page.evaluate("() => document.querySelector('.step-indicator .step').classList.contains('done')")
+    step2_active = page.evaluate("() => document.querySelectorAll('.step-indicator .step')[1].classList.contains('active')")
+    test("setStep(2): step 1 done, step 2 active", step1_done and step2_active)
+
+    # showCard('cardSign') shows sign card, hides others
+    page.evaluate("() => window._fn.showCard('cardSign')")
+    create_hidden = page.evaluate("() => document.getElementById('cardCreate').classList.contains('hidden')")
+    sign_visible = page.evaluate("() => !document.getElementById('cardSign').classList.contains('hidden')")
+    test("showCard('cardSign'): sign visible, create hidden", create_hidden and sign_visible)
+
+
+    # ========================================================
+    section("33. allUtxosHaveWif")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Empty → false
+    result = page.evaluate("() => window._fn.allUtxosHaveWif()")
+    test("allUtxosHaveWif: empty returns false", result == False)
+
+    # Add UTXO with data-wif → true
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('a'.repeat(64), 0, 1000, '0014' + 'ab'.repeat(20),
+            'tb1qtest', null, 'cTestWif');
+    }""")
+    result = page.evaluate("() => window._fn.allUtxosHaveWif()")
+    test("allUtxosHaveWif: single UTXO with WIF returns true", result == True)
+
+    # Check WIF toggle shows checkmark
+    wif_toggle_text = page.evaluate("() => document.querySelector('.wif-toggle').textContent")
+    test("WIF toggle: shows checkmark when WIF present",
+         '\u2714' in wif_toggle_text, f"got '{wif_toggle_text}'")
+
+    # Check data-wif attribute is set
+    data_wif = page.evaluate("() => document.querySelector('[data-utxo]').getAttribute('data-wif')")
+    test("data-wif attribute: set on UTXO row", data_wif == 'cTestWif')
+
+    # Add another UTXO without WIF → false (mixed)
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('b'.repeat(64), 0, 2000, '0014' + 'cd'.repeat(20),
+            'tb1qtest2');
+    }""")
+    result = page.evaluate("() => window._fn.allUtxosHaveWif()")
+    test("allUtxosHaveWif: mixed UTXOs returns false", result == False)
+
+
+    # ========================================================
+    section("34. Dynamic Step Layout")
+    # ========================================================
+
+    # Reload for fresh state
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Default: 4-step layout, button says "Create PSBT"
+    create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
+    test("default layout: button says 'Create PSBT'",
+         create_btn_text.strip() == 'Create PSBT', f"got '{create_btn_text}'")
+
+    visible_steps = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none').length;
+    }""")
+    test("default layout: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+
+    # Add UTXO with WIF → triggers 2-step layout
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('a'.repeat(64), 0, 1000, '0014' + 'ab'.repeat(20),
+            'tb1qtest', null, 'cTestWif');
+        window._fn.updateStepLayout();
+    }""")
+
+    create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
+    test("WIF mode: button says 'Create, Sign & Finalize'",
+         'Sign' in create_btn_text, f"got '{create_btn_text}'")
+
+    visible_steps = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none').length;
+    }""")
+    test("WIF mode: 2 steps visible", visible_steps == 2, f"got {visible_steps}")
+
+    # Add UTXO without WIF → mixed mode, back to 4-step layout
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('b'.repeat(64), 1, 2000, '0014' + 'cd'.repeat(20),
+            'tb1qtest2', null, null);
+        window._fn.updateStepLayout();
+    }""")
+
+    create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
+    test("mixed mode: button says 'Create & Partially Sign PSBT'",
+         'Partially Sign' in create_btn_text, f"got '{create_btn_text}'")
+
+    visible_steps = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none').length;
+    }""")
+    test("mixed mode: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+
+    some_wif = page.evaluate("() => window._fn.someUtxosHaveWif()")
+    test("mixed mode: someUtxosHaveWif() returns true", some_wif == True)
+
 
 # ============================================================
 # Main

@@ -26,7 +26,8 @@ Both approaches work through the same Combine & Finalize step.
 
 ## Features
 
-- **Fetch UTXOs** by address or extended public key (xpub/zpub/vpub/tpub/ypub/upub) from mempool.space (or local regtest server) -- xpub input auto-derives P2WPKH and/or P2TR addresses and scans receive + change chains with BIP44 gap limit
+- **Fetch UTXOs** by address, extended public key (xpub/zpub/vpub/tpub/ypub/upub), or WIF private key from mempool.space (or local regtest server) -- xpub input auto-derives P2WPKH and/or P2TR addresses and scans receive + change chains with BIP44 gap limit; WIF input derives both P2WPKH and P2TR addresses and fetches UTXOs from both
+- **Inline signing** for hot/paper wallets -- when all UTXOs have WIF private keys, signs and finalizes the transaction in-browser without needing external signing tools, going straight from Create to Broadcast
 - **Fee rate presets** pulled live from the network (fast/medium/slow), with estimated fee and available sats display
 - **Output percentage labels** showing each output's share of total input, with a Wipe option to sweep remaining balance
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
@@ -36,6 +37,7 @@ Both approaches work through the same Combine & Finalize step.
 - **CLI signing tool** (`tools/sign-psbt.py`) for hot wallet signing with WIF keys
 - **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
+- **Step indicator wizard** with dynamic step flow -- adapts between 2-step (Create → Broadcast) and 4-step (Create → Sign → Combine → Broadcast) modes based on whether WIF keys are present
 - **Guided workflow** with brief instructions under each step
 - **No server required** -- runs entirely in the browser on GitHub Pages
 - **Regtest mode** with a local Python server for development and testing
@@ -63,15 +65,15 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- index.html, 140 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 162 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
 # Unit tests -- sign.html, 48 tests, no bitcoind needed (~15s)
 python3 tests/test_sign_html.py
 
-# E2E regtest tests -- 128 tests, requires bitcoind + bitcoin-cli (~120s)
+# E2E regtest tests -- 177 tests, requires bitcoind + bitcoin-cli (~120s)
 # Covers P2WPKH + P2TR (Taproot), parallel + serial signing,
-# plus sign.html E2E flow (create PSBT → sign with WIF → finalize → broadcast)
+# sign.html E2E flow, WIF fetch + inline signing, and mixed WIF partial signing
 python3 tests/test_regtest_e2e.py
 
 # E2E testnet4 tests -- 27 tests, requires funded testnet4 wallet (~30s)
@@ -118,7 +120,7 @@ python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 ## Tech Stack
 
 - **Frontend**: `index.html` (sweeper) + `sign.html` (PSBT signer) + `donate.html`, no build step
-- **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [jsQR](https://github.com/nicolo-ribaudo/jsQR), [PaperCSS](https://www.getpapercss.com/)
+- **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [ecpair](https://github.com/nicolo-ribaudo/ecpair) v3.0.0, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [jsQR](https://github.com/nicolo-ribaudo/jsQR), [PaperCSS](https://www.getpapercss.com/)
 - **QR Generator**: Custom `qr_generator.js` (shared with [bitcoin-gift-paper-wallet](https://github.com/ObjSal/bitcoin-gift-paper-wallet))
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)

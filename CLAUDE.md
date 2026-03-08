@@ -4,14 +4,14 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR (all ESM via esm.sh/CDN), custom `qr_generator.js`, PaperCSS for styling. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, ecpair v3.0.0, bbqr (splitQRs/joinQRs), jsQR (all ESM via esm.sh/CDN), custom `qr_generator.js`, PaperCSS for styling. Step indicator wizard UI with dynamic step flow. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
 - **`sign.html`** — Browser-based PSBT signer for hot/paper wallets. Accepts PSBT via file upload, QR scan (BBQr), or paste (hex/base64). Signs with WIF private key using ECPair (supports P2WPKH + P2TR). WIF can be entered manually or scanned from paper wallet QR codes. Outputs signed PSBT as hex, download, or BBQr QR code. Network passed via URL params from sweeper, or auto-detected standalone.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 140 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, sign page link, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, and PSBT accumulator.
+- **`tests/test_psbt_builder.py`** — 162 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, sign page link, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, and dynamic step layout.
 - **`tests/test_sign_html.py`** — 48 unit tests for sign.html using Playwright. Tests network selection, URL params, WIF extraction, PSBT loading (file/paste), WIF validation, signing, download, QR display, and state management.
-- **`tests/test_regtest_e2e.py`** — 128 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, plus sign.html P2WPKH E2E flow (keypair generation → PSBT creation → sign.html signing → finalize → broadcast → on-chain verification). Requires bitcoind/bitcoin-cli.
+- **`tests/test_regtest_e2e.py`** — 177 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, sign.html P2WPKH E2E flow, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
 ## Key Patterns
@@ -60,6 +60,42 @@ The fetch input accepts both plain addresses and extended public keys (xpub/zpub
 
 **Network validation**: Mainnet xpubs are rejected when testnet/regtest is selected and vice versa.
 
+### WIF-Based UTXO Fetching & Inline Signing
+The fetch input also accepts WIF private keys (Wallet Import Format). `isWif(input)` validates against the selected network only (mainnet: 5/K/L, testnet/regtest: c/9) using `ECPair.fromWIF(input, getSelectedNetwork())`.
+
+**Fetch flow** (`fetchUtxosFromWif()`):
+1. Parse WIF via `ECPair.fromWIF(wif, network)` — catch and show error in `#fetchStatus`
+2. Derive P2WPKH address via `bitcoin.payments.p2wpkh({ pubkey, network })`
+3. Derive P2TR address via `pubkeyToAddress(pubkey, 'p2tr', network)`
+4. Fetch UTXOs for both addresses, call `addFetchedInput()` with `wif` parameter
+5. Clear `#fetchAddress` immediately (WIF must not linger in DOM)
+
+**Per-UTXO WIF storage**: `addFetchedInput()` accepts optional `wif` parameter. When provided, sets `data-wif` attribute on the `[data-utxo]` div, adds a collapsible readonly WIF field (same pattern as HW wallet toggle), and shows ✔️ prefix on toggle. Manual input rows (`addInput()`) also have an editable WIF field — entering a valid WIF sets `data-wif` and shows the checkmark.
+
+**Inline signing**: When `allUtxosHaveWif()` returns true, the Create button becomes "Create, Sign & Finalize". Clicking it creates the PSBT, signs each input with its per-UTXO WIF via `ECPair.fromWIF()` + `psbt.signInput()` (try/catch per input), finalizes, extracts the raw transaction, and navigates directly to the Broadcast step.
+
+**Partial signing**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create & Partially Sign PSBT". The PSBT is signed with the available WIFs before download/QR, so the remaining inputs can be signed externally and combined via the normal flow.
+
+**Dispatch order** in `fetchUtxos()`: `isExtendedKey()` → `isWif()` → single address.
+
+### Step Indicator Wizard UI
+The UI uses a step-indicator wizard layout with numbered circles connected by lines. Steps adapt dynamically based on whether WIF private keys are present for all UTXOs.
+
+**Step indicator**: `#stepIndicator` div with `.step` circles (numbered, with labels) and `.step-line` connectors. States: active (orange border `#f7931a`), done (green `#4caf50`), inactive (gray `#ddd`).
+
+**Cards**: Three card divs (`#cardCreate`, `#cardSign`, `#cardBroadcast`) — only one visible at a time via `showCard(id)`. Navigation buttons between cards: `#nextToSign`, `#backToCreate`, `#backToSign`, `#nextToBroadcast`.
+
+**Dynamic layout** (`updateStepLayout()`):
+- **All WIFs present** (2-step mode): Shows `[1: Create] → [2: Broadcast]`, hides Sign/Combine steps, button says "Create, Sign & Finalize"
+- **Some WIFs** (4-step mode): Shows full 4-step layout, button says "Create & Partially Sign PSBT"
+- **No WIFs** (4-step mode): Shows full 4-step layout, button says "Create PSBT"
+
+Called on init and whenever UTXOs change (add/remove/fetch/WIF entry).
+
+**`setStep(n)`**: Updates step indicator circles — marks steps below `n` as done, step `n` as active.
+
+**Combine handler**: Auto-navigates to broadcast card after successful combine (`setStep(3)` → `showCard('cardBroadcast')`).
+
 ### Xpub Auto-Derivation (Hardware Wallet)
 The HW wallet section includes an xpub field that auto-derives the compressed public key. Three functions handle this:
 - **`normalizeExtendedKey(key)`** — Converts SLIP-132 prefixes (ypub/zpub/vpub/upub and multisig variants) to canonical xpub/tpub using a version-bytes map, so `bip32.fromBase58()` accepts any format.
@@ -86,7 +122,7 @@ One default empty output row is shown on page load. No default input rows — us
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.
 
 ### Test Hook
-When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal functions are exposed on `window._fn`, the bitcoin library on `window._bitcoin`, and the ECC library on `window._ecc`. This also prevents regtest option removal when no server is detected. Both `index.html` and `sign.html` support this pattern — sign.html additionally exposes `window._ECPair` and `window._Buffer`.
+When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal functions are exposed on `window._fn`, the bitcoin library on `window._bitcoin`, and the ECC library on `window._ecc`. This also prevents regtest option removal when no server is detected. Both `index.html` and `sign.html` support this pattern — both expose `window._ECPair`, and sign.html additionally exposes `window._Buffer`.
 
 ### Testnet4 Browser Signing
 The testnet4 E2E test signs PSBTs in the browser using ECPair (loaded from `esm.sh/ecpair@3.0.0`). `sign_psbt_in_browser()` uses try/catch per input to skip non-matching inputs, enabling multi-wallet PSBT signing with a single function. Serial signing passes the partially-signed PSBT from key C to key D.

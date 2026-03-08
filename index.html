@@ -130,14 +130,14 @@
     /* Step indicator wizard */
     .step-indicator { display:flex; justify-content:center; gap:0.5rem; margin-bottom:1.5rem; align-items:center; }
     .step-indicator .step {
-      width:36px; height:36px; border-radius:50%; display:flex; flex-direction:column;
+      width:52px; height:52px; border-radius:50%; display:flex; flex-direction:column;
       align-items:center; justify-content:center; font-weight:700;
       background:rgba(255,255,255,0.05); color:var(--text-secondary); border:2px solid rgba(255,255,255,0.15); flex-shrink:0;
     }
     .step-indicator .step.active { background:rgba(247,147,26,0.1); border-color:var(--btc-orange); color:var(--btc-orange); }
     .step-indicator .step.done { background:rgba(46,204,113,0.1); border-color:var(--success); color:var(--success); }
-    .step-indicator .step small { font-size:0.55rem; font-weight:normal; line-height:1; }
-    .step-indicator .step span { font-size:0.75rem; line-height:1; }
+    .step-indicator .step small { font-size:0.6rem; font-weight:normal; line-height:1; }
+    .step-indicator .step span { font-size:0.85rem; line-height:1; }
     .step-line { width:40px; height:2px; background:rgba(255,255,255,0.15); flex-shrink:0; }
     .card.hidden { display: none; }
     .fee-presets { display: flex; gap: 0.4rem; margin-top: 0.4rem; margin-bottom: 0.3rem; }
@@ -198,7 +198,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>₿itcoin Address Sweeper</h1>
+  <h1><span style="color:var(--btc-orange);">₿</span>itcoin Address Sweeper</h1>
   <p class="subtitle">Sweep bitcoin across hardware, hot & paper wallets</p>
 
   <div class="network-bar">
@@ -227,11 +227,11 @@
     <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Add inputs from each wallet by fetching UTXOs, set the outputs and fee, then download the unsigned PSBT file. Remove individual UTXOs from the list if you don't want to spend the entire wallet.</p>
 
     <div>
-      <h3>Inputs (UTXOs)</h3>
+      <h3>Add addresses, WIFs, xpubs, etc.</h3>
       <div id="utxoFetchGroup" style="margin-bottom:1rem;">
         <div class="row">
           <input class="grow" type="text" id="fetchAddress" placeholder="address, xpub/zpub/vpub, or WIF private key">
-          <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:160px;flex:0 0 160px;">Fetch & Add UTXOs</button>
+          <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:140px;flex:0 0 140px;">Fetch Unspent</button>
         </div>
         <div id="fetchStatus" style="font-size:0.85rem;color:var(--text-secondary);margin-top:0.3rem;"></div>
       </div>
@@ -240,20 +240,26 @@
     </div>
 
     <div id="feeRateGroup" style="margin-top:1rem;">
-      <h3>Fee Rate</h3>
-      <div class="fee-presets" id="feePresets">
-        <button type="button" class="fee-preset btn-secondary" data-speed="fast">Fast: --</button>
-        <button type="button" class="fee-preset btn-secondary" data-speed="medium">Med: --</button>
-        <button type="button" class="fee-preset btn-secondary" data-speed="slow">Slow: --</button>
-        <button type="button" id="refreshFees" class="btn-secondary" style="font-size:0.85rem;padding:0.3rem 0.5rem;">&#x21bb;</button>
+      <div style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;" id="feeRateToggle">
+        <h3 style="margin:0;">Fee Rate</h3>
+        <span id="feeRateChevron" style="font-size:0.7rem;color:var(--text-secondary);transition:transform 0.2s;transform:rotate(-90deg);">&#9660;</span>
+        <span id="feeRateSummary" style="color:var(--text-secondary);font-size:0.85rem;"></span>
       </div>
-      <input type="number" id="feeRate" placeholder="or enter custom sat/vB" style="max-width:280px;">
-      <div id="feeCalc" style="margin-top:0.5rem;color:var(--text-secondary);"></div>
+      <div id="feeRateBody" style="display:none;">
+        <div class="fee-presets" id="feePresets">
+          <button type="button" class="fee-preset btn-secondary" data-speed="fast">Fast: --</button>
+          <button type="button" class="fee-preset btn-secondary" data-speed="medium">Med: --</button>
+          <button type="button" class="fee-preset btn-secondary" data-speed="slow">Slow: --</button>
+          <button type="button" id="refreshFees" class="btn-secondary" style="font-size:0.85rem;padding:0.3rem 0.5rem;">&#x21bb;</button>
+        </div>
+        <input type="number" id="feeRate" placeholder="or enter custom sat/vB" style="max-width:280px;">
+        <div id="feeCalc" style="margin-top:0.5rem;color:var(--text-secondary);"></div>
+      </div>
     </div>
 
     <div style="margin-top:1rem;">
       <h3>Outputs</h3>
-      <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Gifting Bitcoin? Create a <a href="https://objsal.github.io/bitcoin-gift-paper-wallet/" target="_blank">Gift Paper Wallet</a></p>
+      <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Gifting Bitcoin? Create an awesome <a href="https://objsal.github.io/bitcoin-gift-paper-wallet/" target="_blank">Paper Wallet!</a></p>
       <div id="outputContainer"></div>
       <button type="button" id="addOutputButton" class="btn-secondary">+ Add Output</button>
     </div>
@@ -1980,6 +1986,19 @@
       });
     });
     document.getElementById('refreshFees').addEventListener('click', fetchFeeRates);
+
+    // Fee Rate collapsible toggle
+    const feeRateToggle = document.getElementById('feeRateToggle');
+    const feeRateBody = document.getElementById('feeRateBody');
+    const feeRateSummary = document.getElementById('feeRateSummary');
+    const feeRateChevron = document.getElementById('feeRateChevron');
+    feeRateToggle.addEventListener('click', () => {
+      const isOpen = feeRateBody.style.display !== 'none';
+      feeRateBody.style.display = isOpen ? 'none' : '';
+      feeRateSummary.style.display = isOpen ? '' : 'none';
+      feeRateChevron.style.transform = isOpen ? 'rotate(-90deg)' : '';
+    });
+
     // Fetch fee rates on load
     fetchFeeRates();
 
@@ -2033,9 +2052,10 @@
       const totalIn = Array.from(utxos).reduce((s, r) => s + (+r.querySelectorAll('input')[2].value || 0), 0);
 
       let feeText = '';
+      const roughVsize = Math.ceil(10.5 + 68 * nIn + 31 * nOut);
+      let estFee = 0;
       if (totalIn > 0 && feeRateSat > 0) {
-        const roughVsize = Math.ceil(10.5 + 68 * nIn + 31 * nOut);
-        const estFee = Math.ceil(feeRateSat * roughVsize);
+        estFee = Math.ceil(feeRateSat * roughVsize);
         const available = Math.max(0, totalIn - estFee);
         const totalOut = Array.from(document.querySelectorAll('#outputContainer [data-output]'))
           .reduce((s, r) => s + (parseInt(r.querySelector('.output-value').value) || 0), 0);
@@ -2049,6 +2069,24 @@
       const feeCalc = document.getElementById('feeCalc');
       feeCalc.textContent = feeText;
       feeCalc.style.display = feeText ? '' : 'none';
+
+      // Update collapsed summary: "~110 sats • Slow (1 sat/vB) | 0.02%"
+      const summary = document.getElementById('feeRateSummary');
+      if (summary) {
+        if (feeRateSat > 0) {
+          const activeBtn = document.querySelector('.fee-preset.active');
+          const speedLabel = activeBtn ? activeBtn.dataset.speed.charAt(0).toUpperCase() + activeBtn.dataset.speed.slice(1) : '';
+          const feePct = (totalIn > 0 && estFee) ? (estFee / totalIn * 100).toFixed(2) : '';
+          let text = '';
+          if (estFee) text += `~${estFee} sats \u2022 `;
+          if (speedLabel) text += `${speedLabel} (${feeRateSat} sat/vB)`;
+          else text += `${feeRateSat} sat/vB`;
+          if (feePct) text += ` | ${feePct}%`;
+          summary.textContent = text;
+        } else {
+          summary.textContent = '';
+        }
+      }
     }
     window.updateFeeCalc = updateFeeCalc;   // make it global for inline handlers
 
@@ -2057,7 +2095,10 @@
     document.getElementById('utxoContainer')
         .addEventListener('input', () => { updateOutputPercentages(); });
     document.getElementById('feeRate')
-        .addEventListener('input', () => { updateOutputPercentages(); });
+        .addEventListener('input', () => {
+          document.querySelectorAll('.fee-preset').forEach(b => b.classList.remove('active'));
+          updateOutputPercentages();
+        });
 
     // Add one default empty output row with Wipe enabled
     addOutput();

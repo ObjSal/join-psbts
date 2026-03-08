@@ -97,22 +97,16 @@
     This Bitcoin Address Sweeper is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds from transactions created with this tool. Always verify addresses, amounts, and fees before signing and broadcasting.
   </div>
 
-  <script>
-    // Minimal QR code generator (numeric mode not needed, just alphanumeric/byte)
-    // Using a simple approach: render via an external library loaded from CDN
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="qr_generator.js"></script>
   <script>
     const ADDRESS = 'bc1qrfagrsfrm8erdsmrku3fgq5yc573zyp2q3uje8';
     const BIP21_URI = 'bitcoin:' + ADDRESS;
 
     (function() {
-      const qr = qrcode(0, 'M');
-      qr.addData(BIP21_URI.toUpperCase());
-      qr.make();
+      const matrix = QRGenerator.generateQR(BIP21_URI.toUpperCase(), QRGenerator.EC_M);
       const cellSize = 5;
       const margin = 4;
-      const size = qr.getModuleCount();
+      const size = matrix.length;
       const canvas = document.getElementById('qrCode');
       const totalSize = (size + margin * 2) * cellSize;
       canvas.width = totalSize;
@@ -123,7 +117,7 @@
       ctx.fillStyle = '#000000';
       for (let row = 0; row < size; row++) {
         for (let col = 0; col < size; col++) {
-          if (qr.isDark(row, col)) {
+          if (matrix[row][col]) {
             ctx.fillRect((col + margin) * cellSize, (row + margin) * cellSize, cellSize, cellSize);
           }
         }

@@ -211,7 +211,22 @@
     <h2>2. Sign with Private Key</h2>
     <p style="color:#888;font-size:0.85rem;margin-top:0;">Enter the WIF (Wallet Import Format) private key to sign the PSBT inputs that belong to this key.</p>
 
+    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+      <button type="button" id="scanWifQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; margin-top:0; padding-top:0.5rem; padding-bottom:0.5rem;">&#128247; Scan QR Code</button>
+    </div>
     <input type="text" id="wifInput" placeholder="Enter WIF private key (starts with K, L, 5, or c)" autocomplete="off" spellcheck="false" style="font-family:'Courier New',monospace; font-size:0.9rem;">
+
+    <div id="wifQrScannerArea" style="display:none; margin-top:0.8rem;">
+      <div style="position:relative; max-width:350px; margin:0 auto; border:3px solid #f7931a; border-radius:8px; overflow:hidden;">
+        <video id="wifQrVideo" autoplay playsinline muted style="width:100%; display:block;"></video>
+        <canvas id="wifQrScanCanvas" style="display:none;"></canvas>
+      </div>
+      <div id="wifQrScanProgress" style="text-align:center; color:#888; font-size:0.85rem; margin-top:0.4rem;"></div>
+      <div style="text-align:center; margin-top:0.5rem;">
+        <button type="button" id="cancelWifScanBtn" class="btn-secondary" style="width:auto;">Cancel Scan</button>
+      </div>
+    </div>
+
     <div id="derivedAddr" class="derived-addr" style="display:none;"></div>
 
     <button type="button" id="signBtn" class="btn-primary" style="margin-top:0.8rem;" disabled>Sign PSBT</button>
@@ -246,7 +261,7 @@
     This tool is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds. Always verify addresses, amounts, and fees before signing and broadcasting. Your private key never leaves this page.
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="qr_generator.js"></script>
   <script type="module">
     import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
     window.Buffer = Buffer;
@@ -265,6 +280,8 @@
     let scannerStream = null;
     let scannerAnimFrame = null;
     let bbqrParts = [];
+    let wifScannerStream = null;
+    let wifScannerAnimFrame = null;
 
     // ── Network ──
     let serverMode = false;
@@ -432,6 +449,9 @@
 
     // ── QR Scanner ──
     async function startQrScanner() {
+      // Stop WIF scanner if running
+      if (wifScannerStream) stopWifQrScanner();
+
       const area = document.getElementById('qrScannerArea');
       const video = document.getElementById('qrVideo');
       const progress = document.getElementById('qrScanProgress');
@@ -581,6 +601,138 @@
       stopQrScanner();
     };
 
+    // ── WIF QR Scanner ──
+    async function startWifQrScanner() {
+      // Stop PSBT scanner if running
+      if (scannerStream) stopQrScanner();
+
+      const area = document.getElementById('wifQrScannerArea');
+      const video = document.getElementById('wifQrVideo');
+      const progress = document.getElementById('wifQrScanProgress');
+      progress.textContent = 'Starting camera...';
+      try {
+        wifScannerStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = wifScannerStream;
+        await video.play();
+        area.style.display = '';
+        progress.textContent = 'Point camera at paper wallet QR code...';
+        scanWifFrame();
+      } catch (err) {
+        progress.textContent = '';
+        area.style.display = 'none';
+        alert('Camera access denied or unavailable: ' + err.message);
+      }
+    }
+
+    function stopWifQrScanner() {
+      if (wifScannerAnimFrame) {
+        cancelAnimationFrame(wifScannerAnimFrame);
+        wifScannerAnimFrame = null;
+      }
+      if (wifScannerStream) {
+        wifScannerStream.getTracks().forEach(t => t.stop());
+        wifScannerStream = null;
+      }
+      const video = document.getElementById('wifQrVideo');
+      video.srcObject = null;
+      document.getElementById('wifQrScannerArea').style.display = 'none';
+      document.getElementById('scanWifQrBtn').textContent = '\u{1F4F7} Scan QR Code';
+    }
+
+    function scanWifFrame() {
+      try {
+        const video = document.getElementById('wifQrVideo');
+        const canvas = document.getElementById('wifQrScanCanvas');
+        if (!wifScannerStream || video.readyState < video.HAVE_ENOUGH_DATA) {
+          wifScannerAnimFrame = requestAnimationFrame(scanWifFrame);
+          return;
+        }
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert'
+        });
+        if (code && code.data) {
+          handleWifScannedQR(code.data);
+        }
+      } catch (err) {
+        console.error('WIF QR scan error:', err);
+      }
+      if (wifScannerStream) {
+        wifScannerAnimFrame = requestAnimationFrame(scanWifFrame);
+      }
+    }
+
+    function extractWifFromData(data) {
+      // Scenario 1: URL with wif query param (bitcoin-gift-paper-wallet sweep URL)
+      // e.g., https://...sweep.html?wif=Kx...&network=mainnet&type=taproot
+      try {
+        const url = new URL(data);
+        const wif = url.searchParams.get('wif');
+        if (wif) {
+          const netParam = url.searchParams.get('network');
+          return { wif, network: netParam, source: 'paper wallet' };
+        }
+      } catch (e) { /* not a URL */ }
+
+      // Scenario 2: URL-like string with wif= param (fallback regex)
+      const wifMatch = data.match(/[?&]wif=([1-9A-HJ-NP-Za-km-z]{51,52})(?:&|$)/);
+      if (wifMatch) {
+        const netMatch = data.match(/[?&]network=([a-zA-Z0-9]+)/);
+        return { wif: wifMatch[1], network: netMatch ? netMatch[1] : null, source: 'paper wallet' };
+      }
+
+      // Scenario 3: Raw WIF string (mixed case, from byte-mode QR)
+      if (/^[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(data)) {
+        return { wif: data, network: null, source: 'QR' };
+      }
+
+      return null;
+    }
+
+    function handleWifScannedQR(data) {
+      const progress = document.getElementById('wifQrScanProgress');
+
+      const result = extractWifFromData(data);
+      if (result) {
+        // Apply network if present
+        if (result.network) {
+          const netMap = { 'mainnet': 'mainnet', 'testnet4': 'testnet', 'regtest': 'regtest' };
+          const mapped = netMap[result.network] || result.network;
+          const networkEl = document.getElementById('network');
+          if (networkEl.querySelector(`option[value="${mapped}"]`)) {
+            networkEl.value = mapped;
+            updateBackLink();
+          }
+        }
+        document.getElementById('wifInput').value = result.wif;
+        document.getElementById('wifInput').dispatchEvent(new Event('input'));
+        progress.textContent = `WIF scanned from ${result.source}!`;
+        stopWifQrScanner();
+        return;
+      }
+
+      progress.textContent = 'QR detected — not a WIF key. Keep scanning...';
+    }
+
+    document.getElementById('scanWifQrBtn').onclick = () => {
+      if (wifScannerStream) {
+        stopWifQrScanner();
+      } else {
+        document.getElementById('scanWifQrBtn').textContent = '\u{1F4F7} Stop Scanning';
+        startWifQrScanner();
+      }
+    };
+
+    document.getElementById('cancelWifScanBtn').onclick = () => {
+      stopWifQrScanner();
+    };
+
     // ── WIF Validation ──
     document.getElementById('wifInput').addEventListener('input', () => {
       const wif = document.getElementById('wifInput').value.trim();
@@ -697,8 +849,8 @@
     };
 
     // ── QR Code Display ──
-    function renderQrToCanvas(qr, canvas, fixedPixels) {
-      const size = qr.getModuleCount();
+    function renderQrToCanvas(matrix, canvas, fixedPixels) {
+      const size = matrix.length;
       const marginPx = 16;
       const totalPixels = fixedPixels || (size * 4 + 2 * marginPx);
       const cellSize = (totalPixels - 2 * marginPx) / size;
@@ -712,7 +864,7 @@
       ctx.fillStyle = '#000000';
       for (let row = 0; row < size; row++) {
         for (let col = 0; col < size; col++) {
-          if (qr.isDark(row, col)) {
+          if (matrix[row][col]) {
             const x = Math.round(marginPx + col * cellSize);
             const y = Math.round(marginPx + row * cellSize);
             const w = Math.round(marginPx + (col + 1) * cellSize) - x;
@@ -743,12 +895,7 @@
       const raw = signedPsbt.toBuffer();
       const { parts } = splitQRs(new Uint8Array(raw), 'P', { encoding: 'Z', maxVersion: 20 });
 
-      const qrObjects = parts.map(data => {
-        const qr = qrcode(0, 'L');
-        qr.addData(data);
-        qr.make();
-        return qr;
-      });
+      const qrMatrices = parts.map(data => QRGenerator.generateQR(data, QRGenerator.EC_L));
 
       qrDiv.style.display = '';
       btn.textContent = 'Hide QR Code';
@@ -758,12 +905,12 @@
       const info = document.getElementById('qrPartInfo');
 
       if (parts.length === 1) {
-        renderQrToCanvas(qrObjects[0], canvas, 350);
+        renderQrToCanvas(qrMatrices[0], canvas, 350);
         info.textContent = '';
       } else {
         let idx = 0;
         function showNext() {
-          renderQrToCanvas(qrObjects[idx], canvas, 350);
+          renderQrToCanvas(qrMatrices[idx], canvas, 350);
           info.textContent = `Part ${idx + 1} of ${parts.length}`;
           idx = (idx + 1) % parts.length;
         }

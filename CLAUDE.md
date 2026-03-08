@@ -4,9 +4,10 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR, qrcode-generator (all ESM via esm.sh/CDN), PaperCSS for styling. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
-- **`sign.html`** — Browser-based PSBT signer for hot/paper wallets. Accepts PSBT via file upload, QR scan (BBQr), or paste (hex/base64). Signs with WIF private key using ECPair (supports P2WPKH + P2TR). Outputs signed PSBT as hex, download, or BBQr QR code. Network passed via URL params from sweeper, or auto-detected standalone.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, bbqr (splitQRs/joinQRs), jsQR (all ESM via esm.sh/CDN), custom `qr_generator.js`, PaperCSS for styling. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
+- **`sign.html`** — Browser-based PSBT signer for hot/paper wallets. Accepts PSBT via file upload, QR scan (BBQr), or paste (hex/base64). Signs with WIF private key using ECPair (supports P2WPKH + P2TR). WIF can be entered manually or scanned from paper wallet QR codes. Outputs signed PSBT as hex, download, or BBQr QR code. Network passed via URL params from sweeper, or auto-detected standalone.
 - **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
+- **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
 - **`tests/test_psbt_builder.py`** — 111 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, and QR code display.
 - **`tests/test_regtest_e2e.py`** — 99 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing. Requires bitcoind/bitcoin-cli.
@@ -89,14 +90,25 @@ When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal fu
 ### Testnet4 Browser Signing
 The testnet4 E2E test signs PSBTs in the browser using ECPair (loaded from `esm.sh/ecpair@3.0.0`). `sign_psbt_in_browser()` uses try/catch per input to skip non-matching inputs, enabling multi-wallet PSBT signing with a single function. Serial signing passes the partially-signed PSBT from key C to key D.
 
+### Custom QR Code Generator (qr_generator.js)
+All pages use `qr_generator.js` — a custom pure-JS QR code generator shared with the bitcoin-gift-paper-wallet project. It replaces the `qrcode-generator@1.4.4` CDN dependency.
+
+**API**: `QRGenerator.generateQR(text, ecLevel)` returns a 2D boolean array (true = dark module). `QRGenerator.qrToCanvas(matrix, ctx, x, y, moduleSize, border)` renders to a canvas context.
+
+**Rendering in index.html/sign.html**: `renderQrToCanvas(matrix, canvas, fixedPixels)` iterates the boolean matrix using `matrix[row][col]` with fixed 16px pixel margins for consistent sizing across animated BBQr frames.
+
+**Modes**: Alphanumeric (uppercased text fitting `0-9A-Z $%*+-./:`) and byte (everything else, UTF-8 encoded). Mode is auto-detected.
+
+**Version range**: 1–20. Versions 7+ include BCH(18,6)-encoded version information in two 6×3 blocks.
+
 ### PSBT QR Code Display (BBQr)
-After creating a PSBT, results are shown in a collapsible area with PSBT hex, Download button, and a Show/Hide QR Code toggle. The QR is rendered using `qrcode-generator@1.4.4` on a 350×350 canvas with fixed 16px pixel margins.
+After creating a PSBT, results are shown in a collapsible area with PSBT hex, Download button, and a Show/Hide QR Code toggle. The QR is rendered using `qr_generator.js` on a 350×350 canvas with fixed 16px pixel margins.
 
 For large PSBTs, `bbqr` (via esm.sh) splits the data into multiple QR parts using the BBQr protocol (Coinkite), natively supported by Coldcard Q. Key settings:
 - `splitQRs(data, 'P', { encoding: 'Z', maxVersion: 20 })` — PSBT type, zlib+base32, max QR version 20
 - `maxVersion: 20` optimized for 350px canvas: 97 modules → ~3.3px/cell → reliable camera scanning
 - Multi-part animation cycles at 250ms per frame with consistent canvas sizing
-- `renderQrToCanvas(qr, canvas, fixedPixels)` uses fixed pixel margins (not cell-based) so the QR pattern boundary stays identical across frames with different module counts
+- `renderQrToCanvas(matrix, canvas, fixedPixels)` uses fixed pixel margins (not cell-based) so the QR pattern boundary stays identical across frames with different module counts
 - `lastPsbt` stores the created PSBT; `hidePsbtResult()` clears stale results when inputs change
 
 ### QR Code Scanning (Upload Signed PSBTs)
@@ -117,7 +129,14 @@ Separate page linked from Step 2 of the sweeper. Lets users sign PSBTs in-browse
 
 **PSBT loading**: File upload (styled label), QR scan (BBQr multi-part support), or paste textarea (hex/base64). All three methods call `loadPsbtFromBytes(data, label)` which parses with `bitcoin.Psbt.fromBuffer()` and displays info (inputs, outputs, total sats, fee).
 
-**Signing**: `ECPair.fromWIF(wif, network)` + `psbt.signInput(i, keyPair)` with try/catch per input. ECPair provides `signSchnorr` via tiny-secp256k1, so both P2WPKH and P2TR (taproot) inputs are supported. WIF validation shows derived P2WPKH address as feedback, with network mismatch detection.
+**WIF input**: Manual text entry or QR code scanning from paper wallets. The QR scanner (`scanWifQrBtn`) supports:
+- Sweep URLs from bitcoin-gift-paper-wallet (`?wif=...&network=...&type=...`) — extracts WIF and auto-selects network
+- Raw WIF strings (starting with 5/K/L/c/9)
+- `extractWifFromData(data)` handles URL parsing, regex fallback, and raw WIF detection
+
+**Cross-scanner management**: Only one camera (PSBT or WIF) can be active at a time. Starting one stops the other. State variables (`wifScannerStream`, `wifScannerAnimFrame`) are declared in the shared state section to avoid `let` hoisting issues.
+
+**Signing**: `ECPair.fromWIF(wif, network)` + `psbt.signInput(i, keyPair)` with try/catch per input. ECPair provides `signSchnorr` via tiny-secp256k1, so both P2WPKH and P2TR (taproot) inputs are supported. WIF validation shows derived P2WPKH and P2TR addresses as feedback, with network mismatch detection.
 
 **Output**: Signed PSBT hex in collapsible `<details>`, download as `.psbt` file, BBQr QR code display (same `renderQrToCanvas` + `splitQRs` pattern as index.html).
 

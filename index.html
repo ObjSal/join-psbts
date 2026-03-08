@@ -344,7 +344,7 @@
     This Bitcoin Address Sweeper is provided as-is, without warranty of any kind. The author is not responsible for any loss of funds from transactions created with this tool. Always verify addresses, amounts, and fees before signing and broadcasting.
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="qr_generator.js"></script>
   <script type="module">
     import { Buffer } from 'https://esm.sh/buffer@6.0.3?target=es2022';
     window.Buffer = Buffer;
@@ -1471,8 +1471,8 @@
       link.click();
     }
 
-    function renderQrToCanvas(qr, canvas, fixedPixels) {
-      const size = qr.getModuleCount();
+    function renderQrToCanvas(matrix, canvas, fixedPixels) {
+      const size = matrix.length;
       const marginPx = 16; // fixed pixel margin for consistent pattern size
       const totalPixels = fixedPixels || (size * 4 + 2 * marginPx);
       const cellSize = (totalPixels - 2 * marginPx) / size;
@@ -1486,7 +1486,7 @@
       ctx.fillStyle = '#000000';
       for (let row = 0; row < size; row++) {
         for (let col = 0; col < size; col++) {
-          if (qr.isDark(row, col)) {
+          if (matrix[row][col]) {
             const x = Math.round(marginPx + col * cellSize);
             const y = Math.round(marginPx + row * cellSize);
             const w = Math.round(marginPx + (col + 1) * cellSize) - x;
@@ -1523,12 +1523,7 @@
       const raw = lastPsbt.toBuffer();
       const { parts } = splitQRs(new Uint8Array(raw), 'P', { encoding: 'Z', maxVersion: 20 });
 
-      const qrObjects = parts.map(data => {
-        const qr = qrcode(0, 'L');
-        qr.addData(data);
-        qr.make();
-        return qr;
-      });
+      const qrMatrices = parts.map(data => QRGenerator.generateQR(data, QRGenerator.EC_L));
 
       qrDiv.style.display = '';
       btn.textContent = 'Hide QR Code';
@@ -1538,12 +1533,12 @@
       const info = document.getElementById('qrPartInfo');
 
       if (parts.length === 1) {
-        renderQrToCanvas(qrObjects[0], canvas, 350);
+        renderQrToCanvas(qrMatrices[0], canvas, 350);
         info.textContent = '';
       } else {
         let idx = 0;
         function showNext() {
-          renderQrToCanvas(qrObjects[idx], canvas, 350);
+          renderQrToCanvas(qrMatrices[idx], canvas, 350);
           info.textContent = `Part ${idx + 1} of ${parts.length}`;
           idx = (idx + 1) % parts.length;
         }

@@ -373,32 +373,32 @@ def run_tests(page, base_url):
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
     page.click("#addOutputButton")
 
-    # Empty → neutral (#ccc or rgb)
+    # Empty → neutral (rgba(255,255,255,0.15))
     color = page.evaluate("""() => {
         const el = document.querySelector('.output-address');
         el.value = '';
         window._fn.colourField(el, false);
         return el.style.borderColor;
     }""")
-    test("colourField empty → neutral", "204" in color or "ccc" in color, f"got '{color}'")
+    test("colourField empty → neutral", "255" in color or "0.15" in color, f"got '{color}'")
 
-    # Valid → green
+    # Valid → green (#2ecc71)
     color = page.evaluate("""() => {
         const el = document.querySelector('.output-address');
         el.value = 'something';
         window._fn.colourField(el, true);
         return el.style.borderColor;
     }""")
-    test("colourField valid → green", color == "green", f"got '{color}'")
+    test("colourField valid → green", "2ecc71" in color or "46, 204, 113" in color, f"got '{color}'")
 
-    # Invalid → red
+    # Invalid → red (#e74c3c)
     color = page.evaluate("""() => {
         const el = document.querySelector('.output-address');
         el.value = 'invalid';
         window._fn.colourField(el, false);
         return el.style.borderColor;
     }""")
-    test("colourField invalid → red", color == "red", f"got '{color}'")
+    test("colourField invalid → red", "e74c3c" in color or "231, 76, 60" in color, f"got '{color}'")
 
     # ========================================================
     section("8. createPsbtFromInputs")
@@ -561,14 +561,14 @@ def run_tests(page, base_url):
     addr_input.dispatch_event("input")
     time.sleep(0.2)
     color = page.evaluate("() => document.querySelector('.output-address').style.borderColor")
-    test("output address valid → green", color == "green", f"got '{color}'")
+    test("output address valid → green", "2ecc71" in color or "46, 204, 113" in color, f"got '{color}'")
 
     # Type invalid address
     addr_input.fill("notvalid")
     addr_input.dispatch_event("input")
     time.sleep(0.2)
     color = page.evaluate("() => document.querySelector('.output-address').style.borderColor")
-    test("output address invalid → red", color == "red", f"got '{color}'")
+    test("output address invalid → red", "e74c3c" in color or "231, 76, 60" in color, f"got '{color}'")
 
     # ========================================================
     section("14. DOM: Default Output Row on Load")
@@ -1062,36 +1062,7 @@ def run_tests(page, base_url):
          f"got {_all_dialogs}")
 
     # ========================================================
-    section("24. updateSignPageLink")
-    # ========================================================
-
-    page.select_option("#network", "mainnet")
-    page.evaluate("() => { window._fn.serverMode = false; }")
-    time.sleep(0.3)
-    href = page.evaluate("() => document.getElementById('signPageLink').href")
-    test("signPageLink mainnet", "network=mainnet" in href, f"got {href}")
-
-    page.select_option("#network", "testnet")
-    time.sleep(0.3)
-    href = page.evaluate("() => document.getElementById('signPageLink').href")
-    test("signPageLink testnet", "network=testnet" in href, f"got {href}")
-
-    page.select_option("#network", "regtest")
-    page.evaluate("() => { window._fn.serverMode = true; }")
-    time.sleep(0.3)
-    # Manually trigger the link update since serverMode changed outside normal flow
-    page.evaluate("""() => {
-        const ev = new Event('change');
-        document.getElementById('network').dispatchEvent(ev);
-    }""")
-    time.sleep(0.3)
-    href = page.evaluate("() => document.getElementById('signPageLink').href")
-    test("signPageLink regtest+serverMode",
-         "network=regtest" in href and "serverMode=true" in href,
-         f"got {href}")
-
-    # ========================================================
-    section("25. isExtendedKey")
+    section("24. isExtendedKey")
     # ========================================================
 
     MASTER_XPUB = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8"
@@ -1153,7 +1124,7 @@ def run_tests(page, base_url):
     test("isExtendedKey: garbage is false", result is False)
 
     # ========================================================
-    section("26. pubkeyToAddress")
+    section("25. pubkeyToAddress")
     # ========================================================
 
     # Derive a known pubkey from xpub for testing
@@ -1217,7 +1188,7 @@ def run_tests(page, base_url):
     test("pubkeyToAddress: deterministic", addr2 == addr, f"got {addr2} vs {addr}")
 
     # ========================================================
-    section("27. renderQrToCanvas")
+    section("26. renderQrToCanvas")
     # ========================================================
 
     # Smoke test: function is callable
@@ -1246,7 +1217,7 @@ def run_tests(page, base_url):
     test("renderQrToCanvas: has dark pixels", has_dark)
 
     # ========================================================
-    section("28. hidePsbtResult")
+    section("27. hidePsbtResult")
     # ========================================================
 
     # First make the result visible by creating a PSBT
@@ -1276,7 +1247,7 @@ def run_tests(page, base_url):
          f"got '{qr_btn}'")
 
     # ========================================================
-    section("29. handleScannedQR format detection")
+    section("28. handleScannedQR format detection")
     # ========================================================
 
     # Build a test PSBT for QR format tests
@@ -1330,7 +1301,7 @@ def run_tests(page, base_url):
          f"got {feedback}")
 
     # ========================================================
-    section("30. PSBT Accumulator List")
+    section("29. PSBT Accumulator List")
     # ========================================================
 
     # Clear accumulator by reloading page
@@ -1370,7 +1341,7 @@ def run_tests(page, base_url):
 
 
     # ========================================================
-    section("31. WIF Detection (isWif)")
+    section("30. WIF Detection (isWif)")
     # ========================================================
 
     page.goto(base_url)
@@ -1408,7 +1379,7 @@ def run_tests(page, base_url):
 
 
     # ========================================================
-    section("32. Step Indicator Wizard")
+    section("31. Step Indicator Wizard")
     # ========================================================
 
     page.goto(base_url)
@@ -1442,7 +1413,7 @@ def run_tests(page, base_url):
 
 
     # ========================================================
-    section("33. allUtxosHaveWif")
+    section("32. allUtxosHaveWif")
     # ========================================================
 
     page.goto(base_url)
@@ -1479,7 +1450,7 @@ def run_tests(page, base_url):
 
 
     # ========================================================
-    section("34. Dynamic Step Layout")
+    section("33. Dynamic Step Layout")
     # ========================================================
 
     # Reload for fresh state

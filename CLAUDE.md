@@ -4,14 +4,12 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 
 ## Architecture
 
-- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, ecpair v3.0.0, bbqr (splitQRs/joinQRs), jsQR (all ESM via esm.sh/CDN), custom `qr_generator.js`, PaperCSS for styling. Step indicator wizard UI with dynamic step flow. Includes a donate button linking to `donate.html`. Step 2 links to `sign.html` with network params.
-- **`sign.html`** — Browser-based PSBT signer for hot/paper wallets. Accepts PSBT via file upload, QR scan (BBQr), or paste (hex/base64). Signs with WIF private key using ECPair (supports P2WPKH + P2TR). WIF can be entered manually or scanned from paper wallet QR codes. Outputs signed PSBT as hex, download, or BBQr QR code. Network passed via URL params from sweeper, or auto-detected standalone.
-- **`donate.html`** — PaperCSS-styled donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
+- **`index.html`** — Entire frontend in one file. Uses bitcoinjs-lib v7.0.0-rc.0, bip32 v4.0.0, bs58check v3.0.1, ecpair v3.0.0, bbqr (splitQRs/joinQRs), jsQR (all ESM via esm.sh/CDN), custom `qr_generator.js`. Dark theme with CSS variables matching bitcoin-gift-paper-wallet (frosted glass cards, gradient background, Bitcoin orange accents). Step indicator wizard UI with dynamic step flow. Includes a donate button linking to `donate.html`.
+- **`donate.html`** — Dark-themed donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 162 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, sign page link, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, and dynamic step layout.
-- **`tests/test_sign_html.py`** — 48 unit tests for sign.html using Playwright. Tests network selection, URL params, WIF extraction, PSBT loading (file/paste), WIF validation, signing, download, QR display, and state management.
-- **`tests/test_regtest_e2e.py`** — 177 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, sign.html P2WPKH E2E flow, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
+- **`tests/test_psbt_builder.py`** — 159 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, and dynamic step layout.
+- **`tests/test_regtest_e2e.py`** — 145 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
 ## Key Patterns
@@ -122,7 +120,7 @@ One default empty output row is shown on page load. No default input rows — us
 `fetchUtxos()` adds `.utxo-source-label` divs to `#utxoContainer` alongside `[data-utxo]` rows. Always use `querySelectorAll('#utxoContainer [data-utxo]')` (not `.children`) to iterate inputs. Same for outputs: use `querySelectorAll('#outputContainer [data-output]')`.
 
 ### Test Hook
-When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal functions are exposed on `window._fn`, the bitcoin library on `window._bitcoin`, and the ECC library on `window._ecc`. This also prevents regtest option removal when no server is detected. Both `index.html` and `sign.html` support this pattern — both expose `window._ECPair`, and sign.html additionally exposes `window._Buffer`.
+When `window.__TEST_MODE__ = true` (set via `page.add_init_script`), internal functions are exposed on `window._fn`, the bitcoin library on `window._bitcoin`, and the ECC library on `window._ecc`. This also prevents regtest option removal when no server is detected. The test hook also exposes `window._ECPair` and `window._Buffer`.
 
 ### Testnet4 Browser Signing
 The testnet4 E2E test signs PSBTs in the browser using ECPair (loaded from `esm.sh/ecpair@3.0.0`). `sign_psbt_in_browser()` uses try/catch per input to skip non-matching inputs, enabling multi-wallet PSBT signing with a single function. Serial signing passes the partially-signed PSBT from key C to key D.
@@ -132,7 +130,7 @@ All pages use `qr_generator.js` — a custom pure-JS QR code generator shared wi
 
 **API**: `QRGenerator.generateQR(text, ecLevel)` returns a 2D boolean array (true = dark module). `QRGenerator.qrToCanvas(matrix, ctx, x, y, moduleSize, border)` renders to a canvas context.
 
-**Rendering in index.html/sign.html**: `renderQrToCanvas(matrix, canvas, fixedPixels)` iterates the boolean matrix using `matrix[row][col]` with fixed 16px pixel margins for consistent sizing across animated BBQr frames.
+**Rendering in index.html**: `renderQrToCanvas(matrix, canvas, fixedPixels)` iterates the boolean matrix using `matrix[row][col]` with fixed 16px pixel margins for consistent sizing across animated BBQr frames.
 
 **Modes**: Alphanumeric (uppercased text fitting `0-9A-Z $%*+-./:`) and byte (everything else, UTF-8 encoded). Mode is auto-detected.
 
@@ -159,28 +157,6 @@ The "Upload Signed PSBTs" section supports both file upload and camera-based QR 
 - **Combine handler**: Reads from `psbtAccumulator[]` instead of file input. Clears accumulator after successful finalize.
 - **File input change handler**: Eagerly reads files into accumulator on selection, clears input for re-selection. Existing E2E tests work unchanged since `page.set_input_files()` triggers the change event.
 
-### Hot Wallet Transaction Signer (sign.html)
-Separate page linked from Step 2 of the sweeper. Lets users sign PSBTs in-browser using a WIF private key.
-
-**Link from sweeper**: `updateSignPageLink()` dynamically sets the href with `?network=` and `&serverMode=` params. Called from `detectServer()` and the network `change` handler.
-
-**PSBT loading**: File upload (styled label), QR scan (BBQr multi-part support), or paste textarea (hex/base64). All three methods call `loadPsbtFromBytes(data, label)` which parses with `bitcoin.Psbt.fromBuffer()` and displays info (inputs, outputs, total sats, fee).
-
-**WIF input**: Manual text entry or QR code scanning from paper wallets. The QR scanner (`scanWifQrBtn`) supports:
-- Sweep URLs from bitcoin-gift-paper-wallet (`?wif=...&network=...&type=...`) — extracts WIF and auto-selects network
-- Raw WIF strings (starting with 5/K/L/c/9)
-- `extractWifFromData(data)` handles URL parsing, regex fallback, and raw WIF detection
-
-**Cross-scanner management**: Only one camera (PSBT or WIF) can be active at a time. Starting one stops the other. State variables (`wifScannerStream`, `wifScannerAnimFrame`) are declared in the shared state section to avoid `let` hoisting issues.
-
-**Signing**: `ECPair.fromWIF(wif, network)` + `psbt.signInput(i, keyPair)` with try/catch per input. ECPair provides `signSchnorr` via tiny-secp256k1. P2WPKH signing works fully. P2TR (taproot) key-path signing requires `tapInternalKey` in the PSBT — the sweeper doesn't set this (it only knows the tweaked output key), so P2TR signing via sign.html requires the PSBT to be produced by a wallet that includes `tapInternalKey`. WIF validation shows derived P2WPKH and P2TR addresses as feedback, with network mismatch detection.
-
-**Output**: Signed PSBT hex in collapsible `<details>`, download as `.psbt` file, BBQr QR code display (same `renderQrToCanvas` + `splitQRs` pattern as index.html).
-
-**Network**: URL param `?network=` takes priority over auto-detection. Auto-detection matches index.html logic (`/api/health` → regtest, isLocalhost → testnet4, else mainnet). "Back to Sweeper" link preserves network params.
-
-**BigInt**: bitcoinjs-lib v7 uses BigInt for transaction values. Accumulate with `0n`/`BigInt()`, convert to `Number()` only for `toLocaleString()` display.
-
 ### Testnet4 Wallet Credentials
 Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TESTNET4_ADDRESS`) > `settings.json`. For Claude Code, credentials are stored in `.claude/settings.local.json` under the `env` key. The `settings.json` file is in `.gitignore`.
 
@@ -190,9 +166,6 @@ Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TE
 # Unit tests — index.html (no bitcoind needed, ~15s)
 python3 tests/test_psbt_builder.py
 
-# Unit tests — sign.html (no bitcoind needed, ~15s)
-python3 tests/test_sign_html.py
-
 # E2E regtest tests (needs bitcoind + bitcoin-cli, ~120s)
 python3 tests/test_regtest_e2e.py
 
@@ -200,7 +173,6 @@ python3 tests/test_regtest_e2e.py
 python3 tests/test_testnet4_e2e.py
 
 # E2E with visible browser
-python3 tests/test_sign_html.py --headed
 python3 tests/test_psbt_builder.py --headed
 python3 tests/test_regtest_e2e.py --headed
 python3 tests/test_testnet4_e2e.py --headed

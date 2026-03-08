@@ -33,7 +33,6 @@ Both approaches work through the same Combine & Finalize step.
 - **QR code display** using [BBQr](https://bbqr.org/) protocol for air-gapped signing with hardware wallets like Coldcard Q (auto-splits large PSBTs into animated multi-part QR sequences)
 - **QR code scanning** to upload signed PSBTs from hardware wallets via camera, with BBQr multi-part support and progress bar -- combine QR-scanned and file-uploaded PSBTs from different sources
 - **Hardware wallet support** with BIP32 derivation paths, master fingerprint, and xpub auto-derivation of compressed public keys (supports xpub/ypub/zpub/vpub/tpub/upub formats via SLIP-132 normalization)
-- **Browser-based PSBT signer** (`sign.html`) for hot and paper wallets -- sign PSBTs with a WIF private key directly in the browser, supports P2WPKH and P2TR (Taproot), with QR scanning for paper wallet private keys
 - **CLI signing tool** (`tools/sign-psbt.py`) for hot wallet signing with WIF keys
 - **Network auto-selection** -- Mainnet on GitHub Pages, Testnet4 on local static server, Regtest with regtest server
 - **Network support** for Mainnet, Testnet4, and Regtest
@@ -65,15 +64,12 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- index.html, 162 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 159 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
-# Unit tests -- sign.html, 48 tests, no bitcoind needed (~15s)
-python3 tests/test_sign_html.py
-
-# E2E regtest tests -- 177 tests, requires bitcoind + bitcoin-cli (~120s)
+# E2E regtest tests -- 145 tests, requires bitcoind + bitcoin-cli (~120s)
 # Covers P2WPKH + P2TR (Taproot), parallel + serial signing,
-# sign.html E2E flow, WIF fetch + inline signing, and mixed WIF partial signing
+# WIF fetch + inline signing, and mixed WIF partial signing
 python3 tests/test_regtest_e2e.py
 
 # E2E testnet4 tests -- 27 tests, requires funded testnet4 wallet (~30s)
@@ -81,7 +77,6 @@ python3 tests/test_regtest_e2e.py
 python3 tests/test_testnet4_e2e.py
 
 # E2E with visible browser
-python3 tests/test_sign_html.py --headed
 python3 tests/test_psbt_builder.py --headed
 python3 tests/test_regtest_e2e.py --headed
 python3 tests/test_testnet4_e2e.py --headed
@@ -119,8 +114,8 @@ python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 
 ## Tech Stack
 
-- **Frontend**: `index.html` (sweeper) + `sign.html` (PSBT signer) + `donate.html`, no build step
-- **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [ecpair](https://github.com/nicolo-ribaudo/ecpair) v3.0.0, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [jsQR](https://github.com/nicolo-ribaudo/jsQR), [PaperCSS](https://www.getpapercss.com/)
+- **Frontend**: `index.html` (sweeper) + `donate.html`, no build step
+- **JS Libraries** (loaded via CDN/esm.sh): [bitcoinjs-lib](https://github.com/nicolo-ribaudo/bitcoinjs-lib) v7.0.0-rc.0, [bip32](https://github.com/nicolo-ribaudo/bip32) v4.0.0, [bs58check](https://github.com/nicolo-ribaudo/bs58check) v3.0.1, [ecpair](https://github.com/nicolo-ribaudo/ecpair) v3.0.0, [bbqr](https://github.com/nicolo-ribaudo/bbqr-js), [jsQR](https://github.com/nicolo-ribaudo/jsQR)
 - **QR Generator**: Custom `qr_generator.js` (shared with [bitcoin-gift-paper-wallet](https://github.com/ObjSal/bitcoin-gift-paper-wallet))
 - **Dev Server**: Python stdlib (`http.server`) + Bitcoin Core RPC
 - **Tests**: [Playwright](https://playwright.dev/python/) (Python sync API)

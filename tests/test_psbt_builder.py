@@ -1283,32 +1283,69 @@ def run_tests(page, base_url):
         }};
     }}""")
 
-    # Base64 PSBT → adds to accumulator
+    # Binary PSBT (binaryData with PSBT magic bytes) → adds to accumulator
     accum_before = page.evaluate("() => window._fn.psbtAccumulator.length")
-    page.evaluate(f'() => window._fn.handleScannedQR("{test_psbt["base64"]}")')
+    page.evaluate(f"""() => {{
+        const buf = window._Buffer.from("{test_psbt["hex"]}", "hex");
+        const binaryData = new Uint8Array(buf);
+        window._fn.handleScannedQR("", binaryData);
+    }}""")
     accum_after = page.evaluate("() => window._fn.psbtAccumulator.length")
-    test("handleScannedQR: base64 PSBT added to accumulator",
+    test("handleScannedQR: binary PSBT added to accumulator",
          accum_after == accum_before + 1,
          f"before={accum_before}, after={accum_after}")
 
-    # Hex PSBT → adds to accumulator
-    page.evaluate(f'() => window._fn.handleScannedQR("{test_psbt["hex"]}")')
+    # Base64 PSBT → adds to accumulator
+    page.evaluate(f'() => window._fn.handleScannedQR("{test_psbt["base64"]}")')
     accum_after2 = page.evaluate("() => window._fn.psbtAccumulator.length")
-    test("handleScannedQR: hex PSBT added to accumulator",
+    test("handleScannedQR: base64 PSBT added to accumulator",
          accum_after2 == accum_after + 1,
          f"before={accum_after}, after={accum_after2}")
 
+    # Hex PSBT → adds to accumulator
+    page.evaluate(f'() => window._fn.handleScannedQR("{test_psbt["hex"]}")')
+    accum_after3 = page.evaluate("() => window._fn.psbtAccumulator.length")
+    test("handleScannedQR: hex PSBT added to accumulator",
+         accum_after3 == accum_after2 + 1,
+         f"before={accum_after2}, after={accum_after3}")
+
     # Non-PSBT → shows feedback, doesn't add
     page.evaluate('() => window._fn.handleScannedQR("Hello World")')
-    accum_after3 = page.evaluate("() => window._fn.psbtAccumulator.length")
+    accum_after4 = page.evaluate("() => window._fn.psbtAccumulator.length")
     test("handleScannedQR: non-PSBT not added",
-         accum_after3 == accum_after2,
-         f"before={accum_after2}, after={accum_after3}")
+         accum_after4 == accum_after3,
+         f"before={accum_after3}, after={accum_after4}")
 
     feedback = page.text_content("#qrScanProgress")
     test("handleScannedQR: non-PSBT feedback",
          "not a psbt" in feedback.lower(),
          f"got {feedback}")
+
+    # Raw transaction hex → sets finalTxHex and navigates to broadcast
+    # Build a fake raw tx hex (version 2 + segwit marker + dummy data)
+    raw_tx_hex = "02000000" + "0001" + "aa" * 100  # 216 hex chars
+    page.evaluate('() => { window._fn.showCard("cardSign"); }')
+    page.evaluate(f'() => window._fn.handleScannedQR("{raw_tx_hex}")')
+    final_tx = page.evaluate("() => window._fn.finalTxHex")
+    test("handleScannedQR: raw tx hex sets finalTxHex",
+         final_tx == raw_tx_hex.lower(),
+         f"got {final_tx[:40] if final_tx else None}...")
+    scan_feedback = page.text_content("#qrScanProgress")
+    test("handleScannedQR: raw tx feedback",
+         "signed transaction scanned" in scan_feedback.lower(),
+         f"got {scan_feedback}")
+    broadcast_visible = page.evaluate('() => !document.getElementById("cardBroadcast").classList.contains("hidden")')
+    test("handleScannedQR: raw tx navigates to broadcast",
+         broadcast_visible,
+         f"cardBroadcast visible={broadcast_visible}")
+
+    # Version 1 raw tx also detected
+    raw_tx_v1 = "01000000" + "bb" * 50
+    page.evaluate(f'() => window._fn.handleScannedQR("{raw_tx_v1}")')
+    final_tx_v1 = page.evaluate("() => window._fn.finalTxHex")
+    test("handleScannedQR: version 1 raw tx detected",
+         final_tx_v1 == raw_tx_v1.lower(),
+         f"got {final_tx_v1[:20] if final_tx_v1 else None}")
 
     # ========================================================
     section("29. PSBT Accumulator List")

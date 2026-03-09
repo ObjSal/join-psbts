@@ -65,13 +65,29 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- index.html, 173 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 178 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
-# E2E regtest tests -- 145 tests, requires bitcoind + bitcoin-cli (~120s)
+# E2E regtest tests -- 148 tests, requires bitcoind + bitcoin-cli (~120s)
 # Covers P2WPKH + P2TR (Taproot), parallel + serial signing,
 # WIF fetch + inline signing, and mixed WIF partial signing
 python3 tests/test_regtest_e2e.py
+
+# Coldcard simulation tests -- 44 tests, requires bitcoind + embit (~120s)
+# Simulates Coldcard signing via bitcoin-cli walletprocesspsbt
+python3 tests/test_coldcard_simulation.py
+
+# Real Coldcard MK4 regtest tests -- 28 tests, requires Coldcard + ckcc + bitcoind + embit
+# User approves transaction on the Coldcard when prompted
+python3 tests/_test_coldcard_regtest.py
+
+# Real Coldcard MK4 testnet4 tests -- 25 tests, requires Coldcard + ckcc + embit
+# Builds mixed WIF+CC PSBT, signs via ckcc, broadcasts to testnet4
+python3 tests/_test_coldcard_testnet4.py
+
+# Website + Coldcard E2E tests -- 23 tests, requires Coldcard + ckcc + Playwright
+# Full browser flow: fetch UTXOs, set HW info, create/sign/combine/broadcast
+python3 tests/_test_coldcard_website_e2e.py
 
 # E2E testnet4 tests -- 27 tests, requires funded testnet4 wallet (~30s)
 # Parallel + serial signing with real testnet4 transactions
@@ -106,11 +122,16 @@ python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 # Outputs: unsigned-signed.psbt
 ```
 
+### Known Issue: `ckcc addr` blocks the Coldcard
+
+`ckcc addr` returns the address to the CLI immediately but displays it on the Coldcard screen, blocking USB until the user dismisses it. The Coldcard tests avoid this by using `ckcc pubkey` and deriving the address locally via embit.
+
 ### Prerequisites
 
 - Python 3
 - [Playwright](https://playwright.dev/python/): `pip install playwright && playwright install chromium`
-- [embit](https://github.com/nicolo-ribaudo/embit): `pip install embit` (for `tools/sign-psbt.py` only)
+- [embit](https://github.com/nicolo-ribaudo/embit): `pip install embit` (for `tools/sign-psbt.py` and Coldcard tests)
+- [ckcc-protocol](https://github.com/Coldcard/ckcc-protocol): `pip install ckcc-protocol` (for real Coldcard MK4 tests only)
 - Bitcoin Core v30+ (for regtest E2E tests only)
 
 ## Tech Stack

@@ -8,8 +8,12 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 - **`donate.html`** — Dark-themed donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 173 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, dynamic step layout, and tip section.
-- **`tests/test_regtest_e2e.py`** — 145 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
+- **`tests/test_psbt_builder.py`** — 178 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, dynamic step layout, and tip section.
+- **`tests/test_regtest_e2e.py`** — 148 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
+- **`tests/test_coldcard_simulation.py`** — 44 tests simulating Coldcard signing behavior using bitcoin-cli `walletprocesspsbt`. Tests parallel signing, serial mixed WIF+CC signing, and website PSBT format via Playwright. No physical Coldcard needed. Requires bitcoind/bitcoin-cli and embit (`pip install embit`).
+- **`tests/_test_coldcard_regtest.py`** — 28 tests with a real Coldcard MK4 via `ckcc sign` CLI. Tests the full mixed WIF+Coldcard signing flow end-to-end: builds PSBT with bip32Derivation, pre-signs WIF input, sends to Coldcard for signing (user approves on device), verifies no P2PKH bug, finalizes, broadcasts on regtest, and confirms the tx is mined with correct recipient balance. Requires Coldcard MK4 + ckcc-protocol + bitcoind + embit. Device info auto-detected via `ckcc xfp/pubkey` (address derived locally from pubkey to avoid `ckcc addr` which blocks the device).
+- **`tests/_test_coldcard_testnet4.py`** — 25 tests with a real Coldcard MK4 on testnet4. Builds a 2-input PSBT (CC + WIF), pre-signs WIF via embit, sends to Coldcard via `ckcc sign`, finalizes, broadcasts to testnet4 mempool.space, verifies tx in mempool and funds returned. Requires Coldcard MK4 + ckcc-protocol + embit + TESTNET4_WIF/TESTNET4_ADDRESS env vars.
+- **`tests/_test_coldcard_website_e2e.py`** — 23 tests for the full browser + Coldcard E2E flow on testnet4. Playwright drives the actual sweeper website: fetches WIF + CC UTXOs, enters HW wallet info (xfp/pubkey/path), creates & partially signs PSBT via the website, signs with Coldcard via `ckcc sign`, uploads CC-signed PSBT back, combines & finalizes in browser, broadcasts to testnet4. Requires Coldcard MK4 + ckcc-protocol + Playwright + TESTNET4_WIF/TESTNET4_ADDRESS env vars.
 - **`tests/test_testnet4_e2e.py`** — 27 E2E tests on real testnet4. Parallel + serial signing with browser-based ECPair signing, funds return to main wallet. Requires a pre-funded testnet4 wallet (credentials via env vars, CLI args, or settings.json).
 
 ## Key Patterns
@@ -74,7 +78,7 @@ The fetch input also accepts WIF private keys (Wallet Import Format). `isWif(inp
 
 **Inline signing**: When `allUtxosHaveWif()` returns true, the Create button becomes "Create, Sign & Finalize". Clicking it creates the PSBT, signs each input with its per-UTXO WIF via `ECPair.fromWIF()` + `psbt.signInput()` (try/catch per input), finalizes, extracts the raw transaction, and navigates directly to the Broadcast step.
 
-**Partial signing**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create & Partially Sign PSBT". The PSBT is signed with the available WIFs before download/QR, so the remaining inputs can be signed externally and combined via the normal flow.
+**Partial signing (single PSBT approach)**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create & Partially Sign PSBT". WIF inputs are signed directly on the main PSBT using `psbt.signInput()` (creating `partial_sigs`), while HW wallet inputs remain unsigned with `witnessUtxo` intact. The resulting single PSBT contains both signed and unsigned inputs — the HW wallet signs its remaining inputs, then the combine step merges everything. This approach avoids the Coldcard P2PKH finalization bug that occurred with the previous parallel signing approach (stripped witnessUtxo).
 
 **Dispatch order** in `fetchUtxos()`: `isExtendedKey()` → `isWif()` → single address.
 
@@ -165,7 +169,7 @@ The "Upload Signed PSBTs" section supports both file upload and camera-based QR 
 
 - **Camera**: `getUserMedia({ facingMode: 'environment' })` opens rear camera in a 350px video element with orange border
 - **Scan loop**: `requestAnimationFrame` → draw video to hidden `#qrScanCanvas` → `jsQR(imageData)` → `handleScannedQR()` (wrapped in try-catch to prevent silent loop death)
-- **Format detection**: BBQr (`B$` prefix) → `handleBBQrPart()` with progress bar; base64 PSBT → check magic bytes `70736274ff`; hex PSBT → regex + magic bytes; non-PSBT → "QR detected — not a PSBT" feedback
+- **Format detection**: BBQr (`B$` prefix) → `handleBBQrPart()` with progress bar; raw binary PSBT → check first 5 bytes for magic `70736274ff`; base64 PSBT → decode + check magic bytes; hex PSBT → regex + magic bytes; raw transaction hex → version bytes `01000000`/`02000000` → sets `finalTxHex` and navigates to broadcast (Coldcard Q outputs finalized tx, not PSBT, when all inputs are signed); non-PSBT → "QR detected — not a PSBT" feedback
 - **BBQr multi-part**: Deduplicates by part number, shows progress bar (`scanned/total`), calls `joinQRs(parts)` when complete
 - **PSBT list**: `.psbt-list-item` cards show source badge (File/QR), label, byte count, and remove button. Styled like `.utxo-fetched` cards.
 - **Combine handler**: Reads from `psbtAccumulator[]` instead of file input. Clears accumulator after successful finalize.
@@ -182,6 +186,13 @@ python3 tests/test_psbt_builder.py
 
 # E2E regtest tests (needs bitcoind + bitcoin-cli, ~120s)
 python3 tests/test_regtest_e2e.py
+
+# Coldcard simulation tests (needs bitcoind + embit, ~120s)
+python3 tests/test_coldcard_simulation.py
+
+# Real Coldcard MK4 tests (needs Coldcard + ckcc + bitcoind + embit)
+# User must approve transaction on device when prompted
+python3 tests/_test_coldcard_regtest.py
 
 # E2E testnet4 tests (needs funded wallet, ~30s)
 python3 tests/test_testnet4_e2e.py
@@ -216,9 +227,15 @@ Signs a PSBT file with a WIF private key. Outputs `<name>-signed.psbt` in the sa
 python3 tools/sign-psbt.py <psbt-file> <wif>
 ```
 
+## Known Issues
+
+### `ckcc addr` blocks the Coldcard USB interface
+`ckcc addr -s -q <path>` returns the address to the CLI immediately, but the Coldcard's `show_address` protocol command displays the address on the device screen and waits for the user to dismiss it (press OK/X). While the address is displayed, the device is "busy" — any subsequent `ckcc` command (including `ckcc sign`) fails with "Coldcard is handling another request right now." There is no `--no-display` or `--silent` flag. The Coldcard tests use `ckcc pubkey` + local address derivation via embit instead to avoid blocking the device.
+
 ## Dependencies
 
 - Python 3 + Playwright (`pip install playwright && playwright install chromium`)
-- [embit](https://github.com/nicolo-ribaudo/embit) (`pip install embit`) for `tools/sign-psbt.py`
+- [embit](https://github.com/nicolo-ribaudo/embit) (`pip install embit`) for `tools/sign-psbt.py` and Coldcard tests
+- [ckcc-protocol](https://github.com/Coldcard/ckcc-protocol) (`pip install ckcc-protocol`) for real Coldcard MK4 tests
 - Bitcoin Core v30+ (bitcoind + bitcoin-cli) for E2E tests
 - No npm/node required — all JS dependencies loaded via CDN

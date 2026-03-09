@@ -200,6 +200,15 @@ def api_post(base_url, path, data):
 # Tests
 # ============================================================
 
+def clear_tip(page):
+    """Deselect tip presets and clear tip sats to avoid outputs > inputs."""
+    page.evaluate("""() => {
+        document.querySelectorAll('.tip-preset').forEach(p => p.classList.remove('active'));
+        document.getElementById('tipSats').value = '0';
+        if (window._fn && window._fn.updateTipSummary) window._fn.updateTipSummary();
+    }""")
+
+
 def run_tests(page, base_url, cli, server_url):
     """Run the full E2E regtest test flow."""
 
@@ -327,6 +336,7 @@ def run_tests(page, base_url, cli, server_url):
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
     # Click Create & Download and expect a file download
+    clear_tip(page)
     all_dialogs.clear()
     page.click("#createPsbt")
     page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
@@ -538,6 +548,7 @@ def run_tests(page, base_url, cli, server_url):
     all_dialogs = []
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
+    clear_tip(page)
     all_dialogs.clear()
     page.click("#createPsbt")
     page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
@@ -731,6 +742,7 @@ def run_tests(page, base_url, cli, server_url):
     all_dialogs = []
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
+    clear_tip(page)
     all_dialogs.clear()
     page.click("#createPsbt")
     page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
@@ -914,6 +926,7 @@ def run_tests(page, base_url, cli, server_url):
     all_dialogs = []
     page.on("dialog", lambda d: (all_dialogs.append(d.message), d.accept()))
 
+    clear_tip(page)
     all_dialogs.clear()
     page.click("#createPsbt")
     page.wait_for_selector("#psbtResult", state="visible", timeout=30000)
@@ -1146,6 +1159,7 @@ def run_tests(page, base_url, cli, server_url):
     value_input.fill(str(F_SEND))
 
     # Click "Create, Sign & Finalize"
+    clear_tip(page)
     page.click("#createPsbt")
     page.wait_for_timeout(2000)
 
@@ -1327,6 +1341,7 @@ def run_tests(page, base_url, cli, server_url):
     page.fill("#feeRate", "1")
 
     # Create partially signed PSBT
+    clear_tip(page)
     all_dialogs.clear()
     page.click("#createPsbt")
     page.wait_for_selector("#psbtResult", state="visible", timeout=10000)

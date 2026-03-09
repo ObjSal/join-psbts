@@ -374,6 +374,7 @@
     let finalPsbt = null;
     let finalTxHex = null;
     let lastPsbt = null;
+    // (removed parallel signing variables — now using single partially-signed PSBT)
 
     // PSBT accumulator for combining file-uploaded and QR-scanned PSBTs
     const psbtAccumulator = [];  // Array of { label: string, source: 'file'|'qr', data: Uint8Array }
@@ -478,8 +479,8 @@
         const code = jsQR(imageData.data, imageData.width, imageData.height, {
           inversionAttempts: 'dontInvert'
         });
-        if (code && code.data) {
-          handleScannedQR(code.data);
+        if (code && (code.data || code.binaryData)) {
+          handleScannedQR(code.data, code.binaryData);
         }
       } catch (err) {
         console.error('QR scan error:', err);
@@ -489,10 +490,20 @@
       }
     }
 
-    function handleScannedQR(data) {
+    function handleScannedQR(data, binaryData) {
       // BBQr frame
-      if (data.startsWith('B$')) {
+      if (data && data.startsWith('B$')) {
         handleBBQrPart(data);
+        return;
+      }
+      // Try raw binary PSBT (byte-mode QR from hardware wallets like Coldcard Q)
+      if (binaryData && binaryData.length >= 5 &&
+          binaryData[0] === 0x70 && binaryData[1] === 0x73 &&
+          binaryData[2] === 0x62 && binaryData[3] === 0x74 &&
+          binaryData[4] === 0xff) {
+        document.getElementById('qrScanProgress').textContent = 'PSBT scanned successfully!';
+        addPsbtToList('QR scan (binary)', 'qr', new Uint8Array(binaryData));
+        stopQrScanner();
         return;
       }
       // Try base64-encoded PSBT
@@ -523,8 +534,25 @@
           }
         }
       } catch (e) { /* not hex */ }
-      // QR detected but not a PSBT — show feedback and keep scanning
-      document.getElementById('qrScanProgress').textContent = 'QR detected — not a PSBT. Keep scanning...';
+      // Try raw transaction hex (Coldcard Q outputs finalized tx, not PSBT, when all inputs are signed)
+      try {
+        if (/^[0-9a-fA-F]+$/.test(data) && data.length >= 10 && data.length % 2 === 0) {
+          const versionHex = data.substring(0, 8).toLowerCase();
+          if (versionHex === '01000000' || versionHex === '02000000') {
+            document.getElementById('qrScanProgress').textContent = 'Signed transaction scanned!';
+            stopQrScanner();
+            finalTxHex = data.toLowerCase();
+            finalPsbt = null;
+            document.getElementById('combinedResult').innerText = finalTxHex;
+            document.getElementById('broadcastHeading').textContent = '3. Broadcast Transaction';
+            setStep(3);
+            showCard('cardBroadcast');
+            return;
+          }
+        }
+      } catch (e) { /* not raw tx */ }
+      // QR detected but not a PSBT
+      document.getElementById('qrScanProgress').textContent = 'QR detected — not a PSBT';
     }
 
     function handleBBQrPart(data) {
@@ -1721,9 +1749,14 @@
           },
         };
 
-        // Add nonWitnessUtxo if cached (for HW wallet fee verification)
+        // Add nonWitnessUtxo if cached — but only for non-native-segwit inputs.
+        // Native segwit (P2WPKH 0014, P2TR 5120, P2WSH 0020) needs only witnessUtxo.
+        // Including nonWitnessUtxo on segwit inputs can cause some HW wallets
+        // (e.g. Coldcard Q) to incorrectly sign as legacy P2PKH.
+        const spk = u.scriptPubKey.toLowerCase();
+        const isNativeSegwit = spk.startsWith('0014') || spk.startsWith('5120') || spk.startsWith('0020');
         const rawHex = rawTxCache.get(u.txid);
-        if (rawHex) {
+        if (rawHex && !isNativeSegwit) {
           inputData.nonWitnessUtxo = Buffer.from(rawHex, 'hex');
         }
 
@@ -1815,7 +1848,8 @@
         return;
       }
 
-      const raw = lastPsbt.toBuffer();
+      const qrPsbt = lastPsbt;
+      const raw = qrPsbt.toBuffer();
       const { parts } = splitQRs(new Uint8Array(raw), 'P', { encoding: 'Z', maxVersion: 20 });
 
       const qrMatrices = parts.map(data => QRGenerator.generateQR(data, QRGenerator.EC_L));
@@ -1920,14 +1954,23 @@
           return;
         }
 
-        // Normal mode: partial WIF signing then show download/QR
-        for (let i = 0; i < utxoRows.length; i++) {
-          const wifVal = utxoRows[i].getAttribute('data-wif');
-          if (!wifVal) continue;
-          try {
-            const kp = ECPair.fromWIF(wifVal, net);
-            psbt.signInput(i, kp);
-          } catch (e) { /* skip non-matching */ }
+        // Single partially-signed PSBT approach for mixed WIF + HW wallet inputs:
+        // Sign WIF inputs directly on the PSBT (creating partial_sigs), leave
+        // HW wallet inputs unsigned with witnessUtxo intact. The resulting PSBT
+        // contains both signed and unsigned inputs — the HW wallet signs its
+        // inputs and the combine step merges everything.
+        if (someUtxosHaveWif()) {
+          let wifSigned = 0;
+          for (let i = 0; i < utxoRows.length; i++) {
+            const wifVal = utxoRows[i].getAttribute('data-wif');
+            if (!wifVal) continue;
+            try {
+              const kp = ECPair.fromWIF(wifVal, net);
+              psbt.signInput(i, kp);
+              wifSigned++;
+            } catch (e) { /* skip non-matching */ }
+          }
+          console.log(`[PSBT] Partial signing: ${wifSigned} WIF inputs signed in-place`);
         }
         document.getElementById('psbtHex').textContent = Buffer.from(psbt.toBuffer()).toString('hex');
         document.getElementById('qrDisplay').style.display = 'none';
@@ -2284,6 +2327,7 @@
         // Step wizard
         setStep, showCard, updateStepLayout,
         get psbtAccumulator() { return psbtAccumulator; },
+        get finalTxHex() { return finalTxHex; },
         get serverMode() { return serverMode; },
         set serverMode(v) { serverMode = v; },
       };

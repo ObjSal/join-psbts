@@ -402,7 +402,7 @@ def run_tests(page, base_url, cli, server_url):
     # ========================================================
 
     # Navigate to Sign card
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     # Upload signed PSBTs
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [signed_a_path, signed_b_path])
@@ -598,7 +598,7 @@ def run_tests(page, base_url, cli, server_url):
     section("12. Finalize via UI (Single File)")
     # ========================================================
 
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [serial_path])
     page.click("#combinePsbt")
@@ -790,7 +790,7 @@ def run_tests(page, base_url, cli, server_url):
     section("18. Combine & Finalize via UI (Taproot)")
     # ========================================================
 
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [tr_a_path, tr_b_path])
     page.click("#combinePsbt")
@@ -974,7 +974,7 @@ def run_tests(page, base_url, cli, server_url):
     section("24. Finalize via UI (Taproot Serial)")
     # ========================================================
 
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     all_dialogs.clear()
     page.set_input_files("#psbtFiles", [trs_path])
     page.click("#combinePsbt")
@@ -1320,15 +1320,15 @@ def run_tests(page, base_url, cli, server_url):
 
     # Verify button text
     btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
-    test("mixed: button says 'sign WIF after HW'",
-         'sign WIF after HW' in btn_text, f"got '{btn_text}'")
+    test("mixed: button says 'Create PSBT'",
+         btn_text.strip() == 'Create PSBT', f"got '{btn_text}'")
 
-    # Verify 4-step layout
+    # Verify 3-step layout (Create → Combine → Broadcast)
     visible_steps = page.evaluate("""() => {
         return Array.from(document.querySelectorAll('.step-indicator .step'))
             .filter(s => s.style.display !== 'none').length;
     }""")
-    test("mixed: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+    test("mixed: 2 steps visible", visible_steps == 2, f"got {visible_steps}")
 
     # Set output and fee
     page.evaluate("() => window._fn.addOutput()")
@@ -1408,7 +1408,7 @@ def run_tests(page, base_url, cli, server_url):
         signed_path = f.name
 
     # Navigate to Sign card and upload — combine step will sign WIF inputs automatically
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     page.set_input_files("#psbtFiles", [signed_path])
     page.wait_for_function(
         "() => document.querySelectorAll('.psbt-list-item').length >= 1",

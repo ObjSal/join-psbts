@@ -8,7 +8,7 @@ Single-page web app for sweeping Bitcoin addresses across hardware wallets, hot 
 - **`donate.html`** — Dark-themed donation page with QR code, clickable Bitcoin address, and link to ₿itcoin Gift Paper Wallet.
 - **`qr_generator.js`** — Custom pure-JS QR code generator (shared with bitcoin-gift-paper-wallet project). Supports versions 1–20, EC levels L/M/Q/H, alphanumeric + byte + numeric modes. Replaces the `qrcode-generator@1.4.4` CDN dependency. API: `QRGenerator.generateQR(text, ecLevel)` returns a boolean[][] matrix.
 - **`server/server.py`** — Local development server for regtest. Manages an isolated bitcoind instance (RegtestNode class) and exposes mempool.space-compatible API endpoints so the frontend code needs minimal branching.
-- **`tests/test_psbt_builder.py`** — 178 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, dynamic step layout, and tip section.
+- **`tests/test_psbt_builder.py`** — 205 unit tests using Playwright (Python sync API). Tests core functions, DOM interactions, PSBT creation, xpub derivation, output percentage/wipe behavior, QR code display, `isExtendedKey`, `pubkeyToAddress`, `handleScannedQR`, PSBT accumulator, WIF detection, step indicator wizard, dynamic step layout, tip section, fetch QR scanner, resetAll, clickable steps, and network switch warning.
 - **`tests/test_regtest_e2e.py`** — 148 E2E tests covering P2WPKH and P2TR (Taproot), both parallel and serial signing, WIF fetch + inline signing E2E flow, and mixed WIF partial signing E2E flow. Requires bitcoind/bitcoin-cli.
 - **`tests/test_coldcard_simulation.py`** — 44 tests simulating Coldcard signing behavior using bitcoin-cli `walletprocesspsbt`. Tests parallel signing, serial mixed WIF+CC signing, and website PSBT format via Playwright. No physical Coldcard needed. Requires bitcoind/bitcoin-cli and embit (`pip install embit`).
 - **`tests/_test_coldcard_regtest.py`** — 28 tests with a real Coldcard MK4 via `ckcc sign` CLI. Tests the full mixed WIF+Coldcard signing flow end-to-end: builds PSBT with bip32Derivation, pre-signs WIF input, sends to Coldcard for signing (user approves on device), verifies no P2PKH bug, finalizes, broadcasts on regtest, and confirms the tx is mined with correct recipient balance. Requires Coldcard MK4 + ckcc-protocol + bitcoind + embit. Device info auto-detected via `ckcc xfp/pubkey` (address derived locally from pubkey to avoid `ckcc addr` which blocks the device).
@@ -78,27 +78,34 @@ The fetch input also accepts WIF private keys (Wallet Import Format). `isWif(inp
 
 **Inline signing**: When `allUtxosHaveWif()` returns true, the Create button becomes "Create, Sign & Finalize". Clicking it creates the PSBT, signs each input with its per-UTXO WIF via `ECPair.fromWIF()` + `psbt.signInput()` (try/catch per input), finalizes, extracts the raw transaction, and navigates directly to the Broadcast step.
 
-**Deferred WIF signing (mixed mode)**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create PSBT (sign WIF after HW)". WIF inputs are intentionally left unsigned at PSBT creation time. The unsigned PSBT is shown via QR/file for the HW wallet to sign its inputs. After the HW-signed PSBT is uploaded, the combine step signs WIF inputs in the browser via `ECPair.fromWIF()` + `psbt.signInput()`, then finalizes. This deferred approach avoids the Coldcard Q auto-finalize bug: if WIF inputs were pre-signed, the CC Q would see all inputs signed and auto-finalize via QR, incorrectly putting P2WPKH signatures in scriptSig (P2PKH-style) instead of witness.
+**Deferred WIF signing (mixed mode)**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), WIF inputs are intentionally left unsigned at PSBT creation time. The unsigned PSBT is shown via QR/file for the HW wallet to sign its inputs. After the HW-signed PSBT is uploaded, the combine step signs WIF inputs in the browser via `ECPair.fromWIF()` + `psbt.signInput()`, then finalizes. This deferred approach avoids the Coldcard Q auto-finalize bug: if WIF inputs were pre-signed, the CC Q would see all inputs signed and auto-finalize via QR, incorrectly putting P2WPKH signatures in scriptSig (P2PKH-style) instead of witness.
 
 **Dispatch order** in `fetchUtxos()`: `isExtendedKey()` → `isWif()` → single address.
 
 ### Step Indicator Wizard UI
-The UI uses a step-indicator wizard layout with numbered circles connected by lines. Steps adapt dynamically based on whether WIF private keys are present for all UTXOs.
+The UI uses a 2-step wizard layout with numbered circles connected by a line: Create → Broadcast.
 
-**Step indicator**: `#stepIndicator` div with `.step` circles (numbered, with labels) and `.step-line` connectors. States: active (orange border `#f7931a`), done (green `#4caf50`), inactive (gray `#ddd`).
+**Step indicator**: `#stepIndicator` div with `.step` circles and `.step-line` connectors. Always shows 2 steps. States: active (orange `#f7931a`), done (green `#4caf50`), inactive (gray).
 
-**Cards**: Three card divs (`#cardCreate`, `#cardSign`, `#cardBroadcast`) — only one visible at a time via `showCard(id)`. Navigation buttons between cards: `#nextToSign`, `#backToCreate`, `#backToSign`, `#nextToBroadcast`.
+**Cards**: Two card divs (`#cardCreate`, `#cardBroadcast`) — only one visible at a time via `showCard(id)`. The broadcast card contains two sections: `#combineSection` (upload/combine PSBTs) and `#broadcastSection` (download/broadcast final tx).
 
 **Dynamic layout** (`updateStepLayout()`):
-- **All WIFs present** (2-step mode): Shows `[1: Create] → [2: Broadcast]`, hides Sign/Combine steps, button says "Create, Sign & Finalize"
-- **Some WIFs** (4-step mode): Shows full 4-step layout, button says "Create & Partially Sign PSBT"
-- **No WIFs** (4-step mode): Shows full 4-step layout, button says "Create PSBT"
+- **All WIFs**: `#combineSection` hidden, `#broadcastSection` visible, button says "Create, Sign & Finalize"
+- **Some or no WIFs**: `#combineSection` visible, `#broadcastSection` hidden (revealed after combine), button says "Create PSBT"
 
 Called on init and whenever UTXOs change (add/remove/fetch/WIF entry).
 
-**`setStep(n)`**: Updates step indicator circles — marks steps below `n` as done, step `n` as active.
+**Combine handler**: After successful combine, reveals `#broadcastSection` within the same broadcast card.
 
-**Combine handler**: Auto-navigates to broadcast card after successful combine (`setStep(3)` → `showCard('cardBroadcast')`).
+**Clickable steps**: Step circles have `cursor: pointer`. Clicking step 1 (Create) shows a `confirm()` warning about losing unsaved progress, then calls `resetAll()` to clear all page state. Clicking step 2 (Broadcast) navigates directly.
+
+**`resetAll()`**: Clears all page state — removes UTXOs, resets outputs to one default row, clears fetch input/status, nullifies `lastPsbt`/`finalPsbt`/`finalTxHex`, clears PSBT accumulator, hides results, resets to step 1 / Create card.
+
+**Network switch warning**: When switching networks while UTXOs or PSBTs exist, a `confirm()` dialog warns about clearing all data. If accepted, calls `resetAll()`. If cancelled, reverts the dropdown to `previousNetwork`. The `previousNetwork` variable tracks the current network.
+
+**Download Transaction**: The broadcast card's download button offers the finalized raw transaction hex (`.txn` file) instead of the PSBT.
+
+**Signing hint**: A hint paragraph below the PSBT hex on the create card tells users to sign the PSBT with each wallet separately, then click Next: Broadcast to upload and combine.
 
 ### Xpub Auto-Derivation (Hardware Wallet)
 The HW wallet section includes an xpub field that auto-derives the compressed public key. Three functions handle this:
@@ -175,6 +182,13 @@ The "Upload Signed PSBTs" section supports both file upload and camera-based QR 
 - **Combine handler**: Reads from `psbtAccumulator[]` instead of file input. Clears accumulator after successful finalize.
 - **File input change handler**: Eagerly reads files into accumulator on selection, clears input for re-selection. Existing E2E tests work unchanged since `page.set_input_files()` triggers the change event.
 
+### Fetch QR Scanner (Step 1: Scan Address/WIF/Xpub)
+The fetch input has a 📷 button that opens a camera-based QR scanner for adding addresses, WIFs, and xpubs. Uses a separate scanner state (`fetchScannerStream`, `fetchScannerAnimFrame`) from the PSBT scanner to avoid conflicts.
+
+- **`parseFetchQrData(data)`**: Parses scanned QR text. Dispatch order: gift wallet sweep URL (`sweep.html?wif=...` → extract WIF) → BIP21 URI (`bitcoin:addr?params` → extract address) → extended key → WIF → valid address → unrecognized string (paste as-is, `autoFetch: false`). Returns `{ value, autoFetch }` or `null`.
+- **`handleFetchScannedQR(data)`**: Calls `parseFetchQrData()`, populates `#fetchAddress`, stops scanner, auto-triggers `fetchUtxos()` when `autoFetch` is true.
+- **Camera setup**: Same pattern as PSBT scanner (`getUserMedia` + `jsQR` + `requestAnimationFrame`), separate element IDs (`#fetchQrVideo`, `#fetchQrScanCanvas`, `#fetchScanProgress`).
+
 ### Testnet4 Wallet Credentials
 Loaded in order: CLI args (`--wif`, `--address`) > env vars (`TESTNET4_WIF`, `TESTNET4_ADDRESS`) > `settings.json`. For Claude Code, credentials are stored in `.claude/settings.local.json` under the `env` key. The `settings.json` file is in `.gitignore`.
 
@@ -218,7 +232,7 @@ python3 server/server.py 8000 --regtest
 
 Configurations are in `.claude/launch.json`.
 
-## CLI Tools
+## Tools
 
 ### `tools/sign-psbt.py` — PSBT Signing
 Signs a PSBT file with a WIF private key. Outputs `<name>-signed.psbt` in the same directory (overwrites if exists). Requires `pip install embit`.
@@ -226,6 +240,9 @@ Signs a PSBT file with a WIF private key. Outputs `<name>-signed.psbt` in the sa
 ```bash
 python3 tools/sign-psbt.py <psbt-file> <wif>
 ```
+
+### `tools/qr-scanner.html` — QR Code Data Inspector
+Web-based QR scanner that opens the camera and displays raw QR code data with format detection. Detects BBQr frames, binary/hex/base64 PSBTs, and raw transaction hex. Used to inspect Coldcard Q QR output. Open via `http://localhost:8000/tools/qr-scanner.html`.
 
 ## Known Issues
 

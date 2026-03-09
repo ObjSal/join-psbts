@@ -65,7 +65,7 @@ The server provides a faucet and auto-mining, and exposes mempool.space-compatib
 ## Testing
 
 ```bash
-# Unit tests -- index.html, 178 tests, no bitcoind needed (~15s)
+# Unit tests -- index.html, 194 tests, no bitcoind needed (~15s)
 python3 tests/test_psbt_builder.py
 
 # E2E regtest tests -- 148 tests, requires bitcoind + bitcoin-cli (~120s)
@@ -122,9 +122,11 @@ python3 tools/sign-psbt.py unsigned.psbt <WIF-private-key>
 # Outputs: unsigned-signed.psbt
 ```
 
-### Known Issue: `ckcc addr` blocks the Coldcard
+### Known Issues
 
-`ckcc addr` returns the address to the CLI immediately but displays it on the Coldcard screen, blocking USB until the user dismisses it. The Coldcard tests avoid this by using `ckcc pubkey` and deriving the address locally via embit.
+**Coldcard Q auto-finalizes P2WPKH inputs as P2PKH via QR**: When the Coldcard Q receives a PSBT via QR where all inputs have `partial_sigs`, it auto-finalizes and outputs a raw transaction. It incorrectly places P2WPKH witness signatures in scriptSig (P2PKH-style), causing "Witness requires empty scriptSig" on broadcast. USB signing (`ckcc sign`) does not have this issue. Workaround: WIF inputs are left unsigned at PSBT creation and signed in the browser during the combine step after the Coldcard returns its signed PSBT. Firmware: v1.4.0Q.
+
+**`ckcc addr` blocks the Coldcard**: `ckcc addr` returns the address to the CLI immediately but displays it on the Coldcard screen, blocking USB until the user dismisses it. The Coldcard tests avoid this by using `ckcc pubkey` and deriving the address locally via embit.
 
 ### Prerequisites
 

@@ -597,12 +597,11 @@ def run_tests(page, base_url):
     label = page.locator("[data-utxo] .script-label span").text_content()
     test("script valid on mainnet", label == MAINNET_P2WPKH, f"got '{label}'")
 
-    # Switch to testnet — same script should decode to testnet address or stay valid
-    # (P2WPKH script is network-independent at the script level, but the decoded address changes)
+    # Switch to testnet — network switch with data clears UTXOs (confirm auto-accepted)
     page.select_option("#network", "testnet")
     time.sleep(0.3)
-    label = page.locator("[data-utxo] .script-label span").text_content()
-    test("script re-validated on network change", label is not None and len(label) > 1, f"got '{label}'")
+    utxo_count = page.locator("#utxoContainer [data-utxo]").count()
+    test("script cleared on network change", utxo_count == 0, f"got {utxo_count} UTXOs")
 
     # ========================================================
     section("16. DOM: Fee Calculation Updates")
@@ -952,6 +951,10 @@ def run_tests(page, base_url):
     page.select_option("#network", "mainnet")
     page.evaluate("() => document.getElementById('utxoContainer').innerHTML = ''")
     page.evaluate("() => document.getElementById('outputContainer').innerHTML = ''")
+
+    # Clear tip to avoid it affecting wipe calculations
+    page.click('.tip-preset[data-pct="0"]')
+    page.fill("#tipSats", "")
 
     # Set up: 1 input worth 100000 sats, fee rate 10 sat/vB
     page.evaluate(f"""() => {{
@@ -1321,10 +1324,10 @@ def run_tests(page, base_url):
          "not a psbt" in feedback.lower(),
          f"got {feedback}")
 
-    # Raw transaction hex → sets finalTxHex and navigates to broadcast
+    # Raw transaction hex → sets finalTxHex and shows broadcast section
     # Build a fake raw tx hex (version 2 + segwit marker + dummy data)
     raw_tx_hex = "02000000" + "0001" + "aa" * 100  # 216 hex chars
-    page.evaluate('() => { window._fn.showCard("cardSign"); }')
+    page.evaluate('() => { window._fn.showCard("cardBroadcast"); }')
     page.evaluate(f'() => window._fn.handleScannedQR("{raw_tx_hex}")')
     final_tx = page.evaluate("() => window._fn.finalTxHex")
     test("handleScannedQR: raw tx hex sets finalTxHex",
@@ -1334,10 +1337,10 @@ def run_tests(page, base_url):
     test("handleScannedQR: raw tx feedback",
          "signed transaction scanned" in scan_feedback.lower(),
          f"got {scan_feedback}")
-    broadcast_visible = page.evaluate('() => !document.getElementById("cardBroadcast").classList.contains("hidden")')
-    test("handleScannedQR: raw tx navigates to broadcast",
+    broadcast_visible = page.evaluate('() => document.getElementById("broadcastSection").style.display !== "none"')
+    test("handleScannedQR: raw tx shows broadcast section",
          broadcast_visible,
-         f"cardBroadcast visible={broadcast_visible}")
+         f"broadcastSection visible={broadcast_visible}")
 
     # Version 1 raw tx also detected
     raw_tx_v1 = "01000000" + "bb" * 50
@@ -1355,7 +1358,6 @@ def run_tests(page, base_url):
     page.goto(base_url)
     page.wait_for_function("() => window._fn !== undefined", timeout=15000)
     _all_dialogs.clear()
-    page.on("dialog", lambda d: (_all_dialogs.append(d.message), d.accept()))
 
     accum_len = page.evaluate("() => window._fn.psbtAccumulator.length")
     test("accumulator: starts empty", accum_len == 0)
@@ -1442,9 +1444,8 @@ def run_tests(page, base_url):
 
     # Only Create card visible by default
     create_visible = page.evaluate("() => !document.getElementById('cardCreate').classList.contains('hidden')")
-    sign_hidden = page.evaluate("() => document.getElementById('cardSign').classList.contains('hidden')")
     broadcast_hidden = page.evaluate("() => document.getElementById('cardBroadcast').classList.contains('hidden')")
-    test("wizard: only Create card visible initially", create_visible and sign_hidden and broadcast_hidden)
+    test("wizard: only Create card visible initially", create_visible and broadcast_hidden)
 
     # setStep(2) marks step 1 as done, step 2 as active
     page.evaluate("() => window._fn.setStep(2)")
@@ -1452,11 +1453,11 @@ def run_tests(page, base_url):
     step2_active = page.evaluate("() => document.querySelectorAll('.step-indicator .step')[1].classList.contains('active')")
     test("setStep(2): step 1 done, step 2 active", step1_done and step2_active)
 
-    # showCard('cardSign') shows sign card, hides others
-    page.evaluate("() => window._fn.showCard('cardSign')")
+    # showCard('cardBroadcast') shows broadcast card, hides create
+    page.evaluate("() => window._fn.showCard('cardBroadcast')")
     create_hidden = page.evaluate("() => document.getElementById('cardCreate').classList.contains('hidden')")
-    sign_visible = page.evaluate("() => !document.getElementById('cardSign').classList.contains('hidden')")
-    test("showCard('cardSign'): sign visible, create hidden", create_hidden and sign_visible)
+    broadcast_visible = page.evaluate("() => !document.getElementById('cardBroadcast').classList.contains('hidden')")
+    test("showCard('cardBroadcast'): broadcast visible, create hidden", create_hidden and broadcast_visible)
 
 
     # ========================================================
@@ -1504,7 +1505,7 @@ def run_tests(page, base_url):
     page.goto(base_url)
     page.wait_for_function("() => window._fn !== undefined", timeout=15000)
 
-    # Default: 4-step layout, button says "Create PSBT"
+    # Default: 2-step layout (Create → Broadcast), button says "Create PSBT"
     create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
     test("default layout: button says 'Create PSBT'",
          create_btn_text.strip() == 'Create PSBT', f"got '{create_btn_text}'")
@@ -1513,7 +1514,19 @@ def run_tests(page, base_url):
         return Array.from(document.querySelectorAll('.step-indicator .step'))
             .filter(s => s.style.display !== 'none').length;
     }""")
-    test("default layout: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+    test("default layout: 2 steps visible", visible_steps == 2, f"got {visible_steps}")
+
+    step_labels = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('.step-indicator .step'))
+            .filter(s => s.style.display !== 'none')
+            .map(s => s.querySelector('small').textContent);
+    }""")
+    test("default layout: step labels are Create/Broadcast",
+         step_labels == ['Create', 'Broadcast'], f"got {step_labels}")
+
+    next_btn_text = page.evaluate("() => document.getElementById('nextToSign').textContent")
+    test("default layout: next button says 'Next: Broadcast →'",
+         'Broadcast' in next_btn_text, f"got '{next_btn_text}'")
 
     # Add UTXO with WIF → triggers 2-step layout
     page.evaluate("""() => {
@@ -1532,7 +1545,7 @@ def run_tests(page, base_url):
     }""")
     test("WIF mode: 2 steps visible", visible_steps == 2, f"got {visible_steps}")
 
-    # Add UTXO without WIF → mixed mode, back to 4-step layout
+    # Add UTXO without WIF → mixed mode, still 2-step layout
     page.evaluate("""() => {
         window._fn.addFetchedInput('b'.repeat(64), 1, 2000, '0014' + 'cd'.repeat(20),
             'tb1qtest2', null, null);
@@ -1540,14 +1553,20 @@ def run_tests(page, base_url):
     }""")
 
     create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
-    test("mixed mode: button says 'Create PSBT (sign WIF after HW)'",
-         'sign WIF after HW' in create_btn_text, f"got '{create_btn_text}'")
+    test("mixed mode: button says 'Create PSBT'",
+         create_btn_text.strip() == 'Create PSBT', f"got '{create_btn_text}'")
 
     visible_steps = page.evaluate("""() => {
         return Array.from(document.querySelectorAll('.step-indicator .step'))
             .filter(s => s.style.display !== 'none').length;
     }""")
-    test("mixed mode: 4 steps visible", visible_steps == 4, f"got {visible_steps}")
+    test("mixed mode: 2 steps visible", visible_steps == 2, f"got {visible_steps}")
+
+    # Combine section visible, broadcast section hidden in non-WIF mode
+    combine_visible = page.evaluate("() => document.getElementById('combineSection').style.display !== 'none'")
+    broadcast_hidden = page.evaluate("() => document.getElementById('broadcastSection').style.display === 'none'")
+    test("mixed mode: combine section visible, broadcast hidden",
+         combine_visible and broadcast_hidden)
 
     some_wif = page.evaluate("() => window._fn.someUtxosHaveWif()")
     test("mixed mode: someUtxosHaveWif() returns true", some_wif == True)
@@ -1632,6 +1651,190 @@ def run_tests(page, base_url):
     tip_addr = page.evaluate("() => document.getElementById('tipAddress').value")
     test("regtest tip address", tip_addr == "bcrt1qrx4ree6dujheqmpd62cnws9zs0eak8v7vtuhv9",
          f"got '{tip_addr}'")
+
+
+    # ========================================================
+    section("35. Fetch QR Scanner (parseFetchQrData)")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Select regtest for validation (regtest accepts bcrt1q addresses)
+    page.select_option("#network", "regtest")
+    time.sleep(1)
+
+    # Generate a valid WIF dynamically (same approach as section 30)
+    test_wif = page.evaluate("""() => {
+        const kp = window._ECPair.makeRandom({ network: window._fn.getSelectedNetwork() });
+        return kp.toWIF();
+    }""")
+
+    # Derive a valid regtest address from the WIF
+    test_addr = page.evaluate(f"""() => {{
+        const kp = window._ECPair.fromWIF('{test_wif}', window._fn.getSelectedNetwork());
+        const p = window._bitcoin.payments.p2wpkh({{ pubkey: kp.publicKey, network: window._fn.getSelectedNetwork() }});
+        return p.address;
+    }}""")
+
+    # Known valid xpub for extended key tests
+    MASTER_XPUB = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8"
+
+    # Plain address
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{test_addr}")')
+    test("parseFetchQrData: plain address",
+         result and result["value"] == test_addr and result["autoFetch"] == True,
+         f"got {result}")
+
+    # BIP21 URI with address only
+    bip21 = f"bitcoin:{test_addr}"
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{bip21}")')
+    test("parseFetchQrData: BIP21 URI",
+         result and result["value"] == test_addr and result["autoFetch"] == True,
+         f"got {result}")
+
+    # BIP21 URI with query params
+    bip21_params = f"bitcoin:{test_addr}?amount=0.5&label=test"
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{bip21_params}")')
+    test("parseFetchQrData: BIP21 with params strips params",
+         result and result["value"] == test_addr,
+         f"got {result}")
+
+    # BIP21 case-insensitive
+    bip21_upper = f"BITCOIN:{test_addr}"
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{bip21_upper}")')
+    test("parseFetchQrData: BIP21 case-insensitive",
+         result and result["value"] == test_addr,
+         f"got {result}")
+
+    # WIF key
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{test_wif}")')
+    test("parseFetchQrData: WIF key",
+         result and result["value"] == test_wif and result["autoFetch"] == True,
+         f"got {result}")
+
+    # Extended public key (xpub) — switch to mainnet since this is a mainnet xpub
+    page.select_option("#network", "mainnet")
+    time.sleep(0.5)
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{MASTER_XPUB}")')
+    test("parseFetchQrData: xpub",
+         result and result["value"] == MASTER_XPUB and result["autoFetch"] == True,
+         f"got {result}")
+    page.select_option("#network", "regtest")
+    time.sleep(0.5)
+
+    # Gift wallet sweep URL
+    sweep_url = f"https://ObjSal.github.io/bitcoin-gift-paper-wallet/sweep.html?wif={test_wif}&network=regtest&type=taproot"
+    result = page.evaluate(f'() => window._fn.parseFetchQrData("{sweep_url}")')
+    test("parseFetchQrData: gift wallet sweep URL extracts WIF",
+         result and result["value"] == test_wif and result["autoFetch"] == True,
+         f"got {result}")
+
+    # Unrecognized string — returns value with autoFetch=false
+    result = page.evaluate('() => window._fn.parseFetchQrData("Hello World")')
+    test("parseFetchQrData: unrecognized string pastes as-is",
+         result and result["value"] == "Hello World" and result["autoFetch"] == False,
+         f"got {result}")
+
+    # Empty string
+    result = page.evaluate('() => window._fn.parseFetchQrData("")')
+    test("parseFetchQrData: empty string returns null",
+         result is None, f"got {result}")
+
+    # Null
+    result = page.evaluate('() => window._fn.parseFetchQrData(null)')
+    test("parseFetchQrData: null returns null",
+         result is None, f"got {result}")
+
+    # handleFetchScannedQR populates fetch input
+    page.evaluate(f'() => window._fn.handleFetchScannedQR("{test_addr}")')
+    fetch_val = page.evaluate('() => document.getElementById("fetchAddress").value')
+    test("handleFetchScannedQR: populates fetch input",
+         fetch_val == test_addr, f"got '{fetch_val}'")
+
+    # Scan button exists
+    btn = page.evaluate('() => !!document.getElementById("fetchScanQrBtn")')
+    test("fetchScanQrBtn exists", btn == True, f"got {btn}")
+
+    # Cancel button exists
+    cancel_btn = page.evaluate('() => !!document.getElementById("cancelFetchScanBtn")')
+    test("cancelFetchScanBtn exists", cancel_btn == True, f"got {cancel_btn}")
+
+
+    # ========================================================
+    section("36. resetAll, Clickable Steps, Network Switch")
+    # ========================================================
+
+    page.goto(base_url)
+    page.wait_for_function("() => window._fn !== undefined", timeout=15000)
+
+    # Add a UTXO and verify it exists
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('a'.repeat(64), 0, 1000, '0014' + 'ab'.repeat(20),
+            'tb1qtest');
+    }""")
+    utxo_count = page.evaluate("() => document.querySelectorAll('#utxoContainer [data-utxo]').length")
+    test("setup: UTXO added", utxo_count == 1)
+
+    # resetAll() clears UTXOs
+    page.evaluate("() => window._fn.resetAll()")
+    utxo_count = page.evaluate("() => document.querySelectorAll('#utxoContainer [data-utxo]').length")
+    test("resetAll: UTXOs cleared", utxo_count == 0)
+
+    # resetAll() preserves one default output
+    output_count = page.evaluate("() => document.querySelectorAll('#outputContainer [data-output]').length")
+    test("resetAll: default output row present", output_count == 1)
+
+    # resetAll() clears PSBT state
+    last = page.evaluate("() => window._fn.lastPsbt")
+    final = page.evaluate("() => window._fn.finalPsbt")
+    final_tx = page.evaluate("() => window._fn.finalTxHex")
+    test("resetAll: PSBT state cleared", last is None and final is None and final_tx is None)
+
+    # resetAll() shows Create card
+    create_visible = page.evaluate("() => !document.getElementById('cardCreate').classList.contains('hidden')")
+    test("resetAll: Create card visible", create_visible)
+
+    # Step circles are clickable (have cursor:pointer)
+    cursor = page.evaluate("""() => {
+        const step = document.querySelector('.step-indicator .step');
+        return getComputedStyle(step).cursor;
+    }""")
+    test("step circles: cursor pointer", cursor == "pointer", f"got {cursor}")
+
+    # Signing hint text exists in psbtResult
+    hint_exists = page.evaluate("""() => {
+        const result = document.getElementById('psbtResult');
+        return result.textContent.includes('Sign this PSBT separately');
+    }""")
+    test("signing hint: text present in psbtResult", hint_exists)
+
+    # Download Transaction button exists (not "Download Final PSBT")
+    dl_text = page.evaluate("() => document.getElementById('downloadFinalPsbt').textContent")
+    test("broadcast card: Download Transaction button",
+         'Transaction' in dl_text, f"got '{dl_text}'")
+
+    # Network switch: no warning when no data
+    _all_dialogs.clear()
+    page.evaluate("() => { document.getElementById('network').value = 'mainnet'; document.getElementById('network').dispatchEvent(new Event('change')); }")
+    test("network switch (no data): no confirm dialog", len(_all_dialogs) == 0,
+         f"got {_all_dialogs}")
+
+    # Add data then switch — should trigger confirm
+    page.evaluate("() => { document.getElementById('network').value = 'testnet'; document.getElementById('network').dispatchEvent(new Event('change')); }")
+    _all_dialogs.clear()
+    page.evaluate("""() => {
+        window._fn.addFetchedInput('c'.repeat(64), 0, 3000, '0014' + 'ef'.repeat(20),
+            'tb1qtest3');
+    }""")
+    page.evaluate("() => { document.getElementById('network').value = 'mainnet'; document.getElementById('network').dispatchEvent(new Event('change')); }")
+    test("network switch (with data): confirm dialog shown",
+         len(_all_dialogs) == 1 and 'Switching networks' in _all_dialogs[0],
+         f"got {_all_dialogs}")
+
+    # After accepting, UTXOs should be cleared
+    utxo_count = page.evaluate("() => document.querySelectorAll('#utxoContainer [data-utxo]').length")
+    test("network switch: UTXOs cleared after confirm", utxo_count == 0)
 
 
 # ============================================================

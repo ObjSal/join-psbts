@@ -131,7 +131,7 @@
     .step-indicator { display:flex; justify-content:center; gap:0.5rem; margin-bottom:1.5rem; align-items:center; }
     .step-indicator .step {
       width:52px; height:52px; border-radius:50%; display:flex; flex-direction:column;
-      align-items:center; justify-content:center; font-weight:700;
+      align-items:center; justify-content:center; font-weight:700; cursor:pointer;
       background:rgba(255,255,255,0.05); color:var(--text-secondary); border:2px solid rgba(255,255,255,0.15); flex-shrink:0;
     }
     .step-indicator .step.active { background:rgba(247,147,26,0.1); border-color:var(--btc-orange); color:var(--btc-orange); }
@@ -231,7 +231,18 @@
       <div id="utxoFetchGroup" style="margin-bottom:1rem;">
         <div class="row">
           <input class="grow" type="text" id="fetchAddress" placeholder="address, xpub/zpub/vpub, or WIF private key">
+          <button type="button" id="fetchScanQrBtn" class="btn-secondary" style="width:auto;flex:0 0 auto;padding:0.4rem 0.6rem;" title="Scan QR code">&#x1F4F7;</button>
           <button type="button" id="fetchUtxosBtn" class="btn-secondary" style="width:140px;flex:0 0 140px;">Fetch Unspent</button>
+        </div>
+        <div id="fetchScannerArea" style="display:none; margin-top:0.5rem;">
+          <div style="position:relative; max-width:350px; margin:0 auto; border:3px solid var(--btc-orange); border-radius:8px; overflow:hidden;">
+            <video id="fetchQrVideo" autoplay playsinline muted style="width:100%; display:block;"></video>
+            <canvas id="fetchQrScanCanvas" style="display:none;"></canvas>
+          </div>
+          <div id="fetchScanProgress" style="text-align:center; color:var(--text-secondary); font-size:0.85rem; margin-top:0.4rem;"></div>
+          <div style="text-align:center; margin-top:0.5rem;">
+            <button type="button" id="cancelFetchScanBtn" class="btn-secondary" style="width:auto;">Cancel Scan</button>
+          </div>
         </div>
         <div id="fetchStatus" style="font-size:0.85rem;color:var(--text-secondary);margin-top:0.3rem;"></div>
       </div>
@@ -292,10 +303,11 @@
         <summary style="cursor:pointer; color:var(--text-secondary); font-size:0.85rem;">PSBT Hex</summary>
         <pre id="psbtHex" style="font-size:0.7rem; word-break:break-all; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:4px; user-select:all;"></pre>
       </details>
+      <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.5rem;margin-bottom:0.5rem;">Sign this PSBT separately with each wallet (hardware wallet, Bitcoin Core, etc.), then click <strong>Next: Broadcast</strong> to upload and combine the signed copies.</p>
       <div id="psbtActions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
         <button id="downloadPsbt" class="btn-secondary">Download PSBT</button>
         <button id="showQrPsbt" class="btn-secondary">Show QR Code (Air-gap signing)</button>
-        <button id="nextToSign" class="btn-primary" style="width:auto;">Next: Sign &rarr;</button>
+        <button id="nextToSign" class="btn-primary" style="width:auto;">Next: Broadcast &rarr;</button>
       </div>
       <div id="qrDisplay" style="display:none; text-align:center; margin-top:1rem;">
         <canvas id="psbtQrCanvas" style="display:block; margin:0 auto;"></canvas>
@@ -309,46 +321,48 @@
     </div>
   </div>
 
-  <div class="card hidden" id="cardSign">
-    <h2>2. Upload Signed PSBTs</h2>
-    <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Have each wallet holder sign the PSBT independently, then upload all signed copies here (via file or QR scan) to combine and finalize.</p>
-    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-      <label for="psbtFiles" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; cursor:pointer; display:inline-block; text-align:center;">&#128194; Choose Files</label>
-      <input type="file" id="psbtFiles" multiple class="psbt-upload" style="display:none;"/>
-      <button type="button" id="scanQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; margin-top:0; padding-top:0.5rem; padding-bottom:0.5rem;">&#128247; Scan QR Code</button>
-    </div>
-
-    <div id="qrScannerArea" style="display:none; margin-top:0.8rem;">
-      <div style="position:relative; max-width:350px; margin:0 auto; border:3px solid #f7931a; border-radius:8px; overflow:hidden;">
-        <video id="qrVideo" autoplay playsinline muted style="width:100%; display:block;"></video>
-        <canvas id="qrScanCanvas" style="display:none;"></canvas>
-      </div>
-      <div id="qrScanProgress" style="text-align:center; color:var(--text-secondary); font-size:0.85rem; margin-top:0.4rem;"></div>
-      <div id="qrProgressBarContainer" style="display:none; max-width:350px; margin:0.4rem auto 0; background:rgba(255,255,255,0.1); border-radius:4px; height:8px; overflow:hidden;">
-        <div id="qrProgressBar" style="height:100%; background:#f7931a; width:0%; transition:width 0.3s;"></div>
-      </div>
-      <div style="text-align:center; margin-top:0.5rem;">
-        <button type="button" id="cancelScanBtn" class="btn-secondary" style="width:auto;">Cancel Scan</button>
-      </div>
-    </div>
-
-    <div id="psbtListContainer" style="display:none; margin-top:0.8rem;">
-      <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:0.3rem;">Signed PSBTs ready to combine:</div>
-      <div id="psbtList"></div>
-    </div>
-
-    <button id="combinePsbt" class="btn-primary" style="margin-top:0.8rem;">Combine & Finalize</button>
-    <pre id="combinedResult"></pre>
-    <button type="button" id="backToCreate" class="btn-secondary" style="margin-top:0.5rem;width:auto;">&larr; Back to Create</button>
-  </div>
-
   <div class="card hidden" id="cardBroadcast">
-    <h2 id="broadcastHeading">3. Broadcast Transaction</h2>
-    <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Download the final PSBT for your records or broadcast the signed transaction to the Bitcoin network.</p>
-    <button id="downloadFinalPsbt" class="btn-secondary">Download Final PSBT</button>
-    <button id="broadcastTx" class="btn-success" style="margin-top:0.5rem;">Broadcast via mempool.space</button>
-    <pre id="broadcastResult"></pre>
-    <button type="button" id="backToSign" class="btn-secondary" style="margin-top:0.5rem;width:auto;">&larr; Back</button>
+    <h2 id="broadcastHeading">2. Broadcast Transaction</h2>
+
+    <div id="combineSection">
+      <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Upload the signed PSBT(s) from your hardware wallet (via file or QR scan), then combine and finalize. Any hot wallet (WIF) inputs are signed automatically.</p>
+      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <label for="psbtFiles" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; cursor:pointer; display:inline-block; text-align:center;">&#128194; Choose Files</label>
+        <input type="file" id="psbtFiles" multiple class="psbt-upload" style="display:none;"/>
+        <button type="button" id="scanQrBtn" class="btn-secondary" style="width:auto; flex:0 0 auto; white-space:nowrap; margin-top:0; padding-top:0.5rem; padding-bottom:0.5rem;">&#128247; Scan QR Code</button>
+      </div>
+
+      <div id="qrScannerArea" style="display:none; margin-top:0.8rem;">
+        <div style="position:relative; max-width:350px; margin:0 auto; border:3px solid #f7931a; border-radius:8px; overflow:hidden;">
+          <video id="qrVideo" autoplay playsinline muted style="width:100%; display:block;"></video>
+          <canvas id="qrScanCanvas" style="display:none;"></canvas>
+        </div>
+        <div id="qrScanProgress" style="text-align:center; color:var(--text-secondary); font-size:0.85rem; margin-top:0.4rem;"></div>
+        <div id="qrProgressBarContainer" style="display:none; max-width:350px; margin:0.4rem auto 0; background:rgba(255,255,255,0.1); border-radius:4px; height:8px; overflow:hidden;">
+          <div id="qrProgressBar" style="height:100%; background:#f7931a; width:0%; transition:width 0.3s;"></div>
+        </div>
+        <div style="text-align:center; margin-top:0.5rem;">
+          <button type="button" id="cancelScanBtn" class="btn-secondary" style="width:auto;">Cancel Scan</button>
+        </div>
+      </div>
+
+      <div id="psbtListContainer" style="display:none; margin-top:0.8rem;">
+        <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:0.3rem;">Signed PSBTs ready to combine:</div>
+        <div id="psbtList"></div>
+      </div>
+
+      <button id="combinePsbt" class="btn-primary" style="margin-top:0.8rem;">Combine & Finalize</button>
+      <pre id="combinedResult"></pre>
+    </div>
+
+    <div id="broadcastSection">
+      <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0;">Download the finalized transaction for your records or broadcast it to the Bitcoin network.</p>
+      <button id="downloadFinalPsbt" class="btn-secondary">Download Transaction</button>
+      <button id="broadcastTx" class="btn-success" style="margin-top:0.5rem;">Broadcast via mempool.space</button>
+      <pre id="broadcastResult"></pre>
+    </div>
+
+    <button type="button" id="backToCreate" class="btn-secondary" style="margin-top:0.5rem;width:auto;">&larr; Back to Create</button>
   </div>
 
   <div style="text-align: center; padding: 24px 16px 12px; margin-top: 32px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary); font-size: 12px; line-height: 1.6;">
@@ -374,13 +388,17 @@
     let finalPsbt = null;
     let finalTxHex = null;
     let lastPsbt = null;
-    // (removed parallel signing variables — now using single partially-signed PSBT)
+    let previousNetwork = document.getElementById('network').value;
 
     // PSBT accumulator for combining file-uploaded and QR-scanned PSBTs
     const psbtAccumulator = [];  // Array of { label: string, source: 'file'|'qr', data: Uint8Array }
     let scannerStream = null;
     let scannerAnimFrame = null;
     let bbqrParts = [];
+
+    // Fetch QR scanner (separate from PSBT scanner)
+    let fetchScannerStream = null;
+    let fetchScannerAnimFrame = null;
 
     function addPsbtToList(label, source, data) {
       psbtAccumulator.push({ label, source, data });
@@ -544,9 +562,8 @@
             finalTxHex = data.toLowerCase();
             finalPsbt = null;
             document.getElementById('combinedResult').innerText = finalTxHex;
-            document.getElementById('broadcastHeading').textContent = '3. Broadcast Transaction';
-            setStep(3);
-            showCard('cardBroadcast');
+            // Show broadcast section (already on the broadcast card)
+            document.getElementById('broadcastSection').style.display = '';
             return;
           }
         }
@@ -589,6 +606,120 @@
           bbqrParts = [];
           bar.style.width = '0%';
         }
+      }
+    }
+
+    // ── Fetch QR Scanner (Step 1: scan address/WIF/xpub QR codes) ──
+
+    function parseFetchQrData(data) {
+      if (!data || typeof data !== 'string') return null;
+      const trimmed = data.trim();
+      if (!trimmed) return null;
+
+      // 1. Gift wallet sweep URL (contains sweep.html with wif param)
+      if (trimmed.includes('sweep.html') && trimmed.includes('wif=')) {
+        try {
+          const url = new URL(trimmed);
+          const wif = url.searchParams.get('wif');
+          if (wif) return { value: wif, autoFetch: true };
+        } catch (e) { /* not a valid URL, fall through */ }
+      }
+
+      // 2. BIP21 URI (bitcoin:address?params)
+      if (/^bitcoin:/i.test(trimmed)) {
+        const withoutScheme = trimmed.replace(/^bitcoin:/i, '');
+        const address = withoutScheme.split('?')[0];
+        if (address) return { value: address, autoFetch: true };
+      }
+
+      // 3. Extended key, WIF, or plain address — use as-is
+      if (isExtendedKey(trimmed)) return { value: trimmed, autoFetch: true };
+      if (isWif(trimmed)) return { value: trimmed, autoFetch: true };
+      const net = getSelectedNetwork();
+      if (validateBitcoinAddress(trimmed, net)) return { value: trimmed, autoFetch: true };
+
+      // 4. Unrecognized but non-empty string — paste as-is, let user decide
+      return { value: trimmed, autoFetch: false };
+    }
+
+    async function startFetchQrScanner() {
+      const area = document.getElementById('fetchScannerArea');
+      const video = document.getElementById('fetchQrVideo');
+      const progress = document.getElementById('fetchScanProgress');
+      progress.textContent = 'Starting camera...';
+      try {
+        fetchScannerStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = fetchScannerStream;
+        await video.play();
+        area.style.display = '';
+        progress.textContent = 'Point camera at QR code...';
+        fetchScanFrame();
+      } catch (err) {
+        progress.textContent = '';
+        area.style.display = 'none';
+        document.getElementById('fetchStatus').textContent = 'Camera access denied: ' + err.message;
+      }
+    }
+
+    function stopFetchQrScanner() {
+      if (fetchScannerAnimFrame) {
+        cancelAnimationFrame(fetchScannerAnimFrame);
+        fetchScannerAnimFrame = null;
+      }
+      if (fetchScannerStream) {
+        fetchScannerStream.getTracks().forEach(t => t.stop());
+        fetchScannerStream = null;
+      }
+      const video = document.getElementById('fetchQrVideo');
+      video.srcObject = null;
+      document.getElementById('fetchScannerArea').style.display = 'none';
+    }
+
+    function fetchScanFrame() {
+      try {
+        const video = document.getElementById('fetchQrVideo');
+        const canvas = document.getElementById('fetchQrScanCanvas');
+        if (!fetchScannerStream || video.readyState < video.HAVE_ENOUGH_DATA) {
+          fetchScannerAnimFrame = requestAnimationFrame(fetchScanFrame);
+          return;
+        }
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert'
+        });
+        if (code && code.data) {
+          handleFetchScannedQR(code.data);
+        }
+      } catch (err) {
+        console.error('Fetch QR scan error:', err);
+      }
+      if (fetchScannerStream) {
+        fetchScannerAnimFrame = requestAnimationFrame(fetchScanFrame);
+      }
+    }
+
+    function handleFetchScannedQR(data) {
+      const progress = document.getElementById('fetchScanProgress');
+      const result = parseFetchQrData(data);
+
+      if (!result) {
+        progress.textContent = 'QR detected \u2014 not a recognized address or key';
+        return;
+      }
+
+      const fetchInput = document.getElementById('fetchAddress');
+      fetchInput.value = result.value;
+      progress.textContent = 'Scanned successfully!';
+      stopFetchQrScanner();
+
+      if (result.autoFetch) {
+        fetchUtxos();
       }
     }
 
@@ -1214,7 +1345,7 @@
     }
 
     function showCard(id) {
-      ['cardCreate', 'cardSign', 'cardBroadcast'].forEach(c => {
+      ['cardCreate', 'cardBroadcast'].forEach(c => {
         document.getElementById(c).classList.add('hidden');
       });
       document.getElementById(id).classList.remove('hidden');
@@ -1226,40 +1357,92 @@
       const steps = indicator.querySelectorAll('.step');
       const lines = indicator.querySelectorAll('.step-line');
 
+      // Always 2-step: Create → Broadcast
+      steps[0].querySelector('small').textContent = 'Create';
+      steps[1].querySelector('small').textContent = 'Broadcast';
+      steps[1].setAttribute('data-step', '2');
+      steps[1].style.display = '';
+      lines[0].style.display = '';
+      // Hide steps 3, 4 and extra lines
+      steps[2].style.display = 'none';
+      lines[1].style.display = 'none';
+      steps[3].style.display = 'none';
+      lines[2].style.display = 'none';
+
+      // Show/hide combine section in broadcast card
+      const combineSection = document.getElementById('combineSection');
+      const broadcastSection = document.getElementById('broadcastSection');
       if (wifMode) {
-        // 2-step mode: Create → Broadcast
-        steps[0].querySelector('small').textContent = 'Create';
-        steps[1].querySelector('small').textContent = 'Broadcast';
-        steps[1].setAttribute('data-step', '2');
-        steps[1].style.display = '';
-        lines[0].style.display = '';
-        // Hide steps 3 and 4
-        steps[2].style.display = 'none';
-        lines[1].style.display = 'none';
-        steps[3].style.display = 'none';
-        lines[2].style.display = 'none';
+        combineSection.style.display = 'none';
+        broadcastSection.style.display = '';
       } else {
-        // 4-step mode: Create → Sign → Combine → Broadcast
-        steps[0].querySelector('small').textContent = 'Create';
-        steps[1].querySelector('small').textContent = 'Sign';
-        steps[1].setAttribute('data-step', '2');
-        steps[1].style.display = '';
-        lines[0].style.display = '';
-        steps[2].querySelector('small').textContent = 'Combine';
-        steps[2].style.display = '';
-        lines[1].style.display = '';
-        steps[3].style.display = '';
-        lines[2].style.display = '';
+        combineSection.style.display = '';
+        broadcastSection.style.display = 'none';
       }
 
       // Update Create button text
       const createBtn = document.getElementById('createPsbt');
-      createBtn.textContent = wifMode ? 'Create, Sign & Finalize'
-        : someUtxosHaveWif() ? 'Create PSBT (sign WIF after HW)'
-        : 'Create PSBT';
+      createBtn.textContent = wifMode ? 'Create, Sign & Finalize' : 'Create PSBT';
 
       // Reset to step 1
       setStep(1);
+    }
+
+    function resetAll() {
+      // Clear all UTXOs and source labels
+      const utxoContainer = document.getElementById('utxoContainer');
+      utxoContainer.innerHTML = '';
+      // Clear all outputs and add a fresh default one with Wipe enabled
+      const outputContainer = document.getElementById('outputContainer');
+      outputContainer.innerHTML = '';
+      addOutput();
+      const defaultWipe = document.querySelector('#outputContainer [data-output] .output-wipe');
+      if (defaultWipe) { defaultWipe.checked = true; handleWipeToggle(defaultWipe.closest('[data-output]')); }
+      // Clear fetch address
+      document.getElementById('fetchAddress').value = '';
+      document.getElementById('fetchAddress').style.borderColor = '';
+      document.getElementById('fetchStatus').textContent = '';
+      // Clear PSBT state
+      lastPsbt = null;
+      finalPsbt = null;
+      finalTxHex = null;
+      hidePsbtResult();
+      document.getElementById('wifSignResult').style.display = 'none';
+      // Clear accumulator and list
+      psbtAccumulator.length = 0;
+      renderPsbtList();
+      // Clear results
+      document.getElementById('combinedResult').innerText = '';
+      document.getElementById('broadcastResult').innerText = '';
+      // Reset fee rate and re-fetch defaults (auto-selects slow)
+      document.getElementById('feeRate').value = '';
+      document.querySelectorAll('.fee-preset').forEach(b => b.classList.remove('active'));
+      document.getElementById('feeCalc').textContent = '';
+      document.getElementById('feeRateSummary').textContent = '';
+      fetchFeeRates();
+      // Collapse fee rate section (keep expanded in test mode)
+      if (!window.__TEST_MODE__) {
+        document.getElementById('feeRateBody').style.display = 'none';
+        document.getElementById('feeRateSummary').style.display = '';
+        document.getElementById('feeRateChevron').style.transform = 'rotate(-90deg)';
+      }
+      // Reset tip to default (0.99% preset active, no sats yet)
+      document.getElementById('tipSats').value = '';
+      document.querySelectorAll('.tip-preset').forEach(b => b.classList.remove('active'));
+      document.querySelector('.tip-preset[data-pct="0.99"]').classList.add('active');
+      // Collapse tip section (keep expanded in test mode)
+      if (!window.__TEST_MODE__) {
+        document.getElementById('tipBody').style.display = 'none';
+        document.getElementById('tipSummary').style.display = '';
+        document.getElementById('tipChevron').style.transform = 'rotate(-90deg)';
+      }
+      updateTipAddress();
+      updateTipSummary();
+      // Reset layout and navigate to Create
+      updateStepLayout();
+      updateOutputPercentages();
+      setStep(1);
+      showCard('cardCreate');
     }
 
 
@@ -1948,7 +2131,6 @@
           document.getElementById('wifSignedTxHex').textContent = finalTxHex;
 
           // Jump to broadcast
-          document.getElementById('broadcastHeading').textContent = '2. Broadcast Transaction';
           setStep(2);
           showCard('cardBroadcast');
           return;
@@ -1973,10 +2155,10 @@
       }
     };
 
-    // Navigation: Next to Sign step
+    // Navigation: Next to Broadcast step
     document.getElementById('nextToSign').addEventListener('click', () => {
       setStep(2);
-      showCard('cardSign');
+      showCard('cardBroadcast');
     });
 
     // Navigation: Back to Create
@@ -1985,22 +2167,24 @@
       showCard('cardCreate');
     });
 
-    // Navigation: Back from Broadcast
-    document.getElementById('backToSign').addEventListener('click', () => {
-      if (allUtxosHaveWif()) {
-        setStep(1);
-        showCard('cardCreate');
-      } else {
-        setStep(2);
-        showCard('cardSign');
-      }
+    // Navigation: Next to Broadcast (from inline WIF sign result)
+    document.getElementById('nextToBroadcast').addEventListener('click', () => {
+      setStep(2);
+      showCard('cardBroadcast');
     });
 
-    // Navigation: Next to Broadcast after Combine
-    document.getElementById('nextToBroadcast').addEventListener('click', () => {
-      const wifMode = allUtxosHaveWif();
-      setStep(wifMode ? 2 : 4);
-      showCard('cardBroadcast');
+    // Clickable step circles
+    document.querySelectorAll('.step-indicator .step').forEach(el => {
+      el.addEventListener('click', () => {
+        const stepNum = parseInt(el.getAttribute('data-step'));
+        if (stepNum === 1) {
+          if (!confirm('Go back to Create? Any unsaved progress will be lost.')) return;
+          resetAll();
+        } else if (stepNum === 2) {
+          setStep(2);
+          showCard('cardBroadcast');
+        }
+      });
     });
 
 
@@ -2014,7 +2198,7 @@
       e.target.value = '';
     });
 
-    // QR scanner buttons
+    // QR scanner buttons (PSBT scanner in Sign/Combine step)
     document.getElementById('scanQrBtn').addEventListener('click', () => {
       if (scannerStream) {
         stopQrScanner();
@@ -2023,6 +2207,16 @@
       }
     });
     document.getElementById('cancelScanBtn').addEventListener('click', stopQrScanner);
+
+    // Fetch QR scanner button (Step 1: scan address/WIF/xpub)
+    document.getElementById('fetchScanQrBtn').addEventListener('click', () => {
+      if (fetchScannerStream) {
+        stopFetchQrScanner();
+      } else {
+        startFetchQrScanner();
+      }
+    });
+    document.getElementById('cancelFetchScanBtn').addEventListener('click', stopFetchQrScanner);
 
     // Combine & Finalize: read from accumulator
     document.getElementById('combinePsbt').onclick = async () => {
@@ -2070,10 +2264,8 @@
         document.getElementById('combinedResult').innerText = finalTxHex;
         psbtAccumulator.length = 0;
         renderPsbtList();
-        // Navigate to broadcast step
-        document.getElementById('broadcastHeading').textContent = '3. Broadcast Transaction';
-        setStep(3);
-        showCard('cardBroadcast');
+        // Show broadcast section (already on the broadcast card)
+        document.getElementById('broadcastSection').style.display = '';
       } catch (e) {
         alert("Error combining/finalizing PSBTs: " + e.message);
       }
@@ -2099,16 +2291,14 @@
     };
 
     document.getElementById('downloadFinalPsbt').onclick = () => {
-      if (!finalPsbt || typeof finalPsbt !== 'object' || !finalPsbt.toBuffer) {
-        alert("No finalized PSBT available");
+      if (!finalTxHex) {
+        alert("No finalized transaction available");
         return;
       }
-
-      const psbtBuffer = finalPsbt.toBuffer();
-      const blob = new Blob([psbtBuffer], { type: 'application/octet-stream' });
+      const blob = new Blob([finalTxHex], { type: 'text/plain' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'finalized.psbt';
+      link.download = 'finalized.txn';
       link.click();
     };
 
@@ -2227,7 +2417,17 @@
       document.getElementById('tipAddress').value = TIP_ADDRESSES[net] || TIP_ADDRESSES.mainnet;
     }
 
-    document.getElementById('network').addEventListener('change', () => {
+    document.getElementById('network').addEventListener('change', (e) => {
+      const hasUtxos = document.querySelectorAll('#utxoContainer [data-utxo]').length > 0;
+      const hasPsbt = !!lastPsbt || !!finalPsbt || !!finalTxHex;
+      if (hasUtxos || hasPsbt) {
+        if (!confirm('Switching networks will clear all inputs, outputs, and PSBTs. Continue?')) {
+          e.target.value = previousNetwork;
+          return;
+        }
+        resetAll();
+      }
+      previousNetwork = e.target.value;
       rawTxCache.clear();
       refreshAllScriptLabels();
       fetchFeeRates().catch(() => {});
@@ -2327,13 +2527,16 @@
         addPsbtToList, removePsbtFromList, renderPsbtList,
         handleScannedQR, handleBBQrPart,
         startQrScanner, stopQrScanner,
+        // Fetch QR scanner
+        parseFetchQrData, handleFetchScannedQR,
+        startFetchQrScanner, stopFetchQrScanner,
         // WIF support
         isWif, fetchUtxosFromWif, allUtxosHaveWif, someUtxosHaveWif,
         // Tip
         updateTipSummary, recalcTipIfPreset, updateTipAddress, getTipOutputCount,
         get TIP_ADDRESSES() { return TIP_ADDRESSES; },
         // Step wizard
-        setStep, showCard, updateStepLayout,
+        setStep, showCard, updateStepLayout, resetAll,
         get psbtAccumulator() { return psbtAccumulator; },
         get finalTxHex() { return finalTxHex; },
         get serverMode() { return serverMode; },

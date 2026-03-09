@@ -1255,7 +1255,7 @@
       // Update Create button text
       const createBtn = document.getElementById('createPsbt');
       createBtn.textContent = wifMode ? 'Create, Sign & Finalize'
-        : someUtxosHaveWif() ? 'Create & Partially Sign PSBT'
+        : someUtxosHaveWif() ? 'Create PSBT (sign WIF after HW)'
         : 'Create PSBT';
 
       // Reset to step 1
@@ -1954,23 +1954,14 @@
           return;
         }
 
-        // Single partially-signed PSBT approach for mixed WIF + HW wallet inputs:
-        // Sign WIF inputs directly on the PSBT (creating partial_sigs), leave
-        // HW wallet inputs unsigned with witnessUtxo intact. The resulting PSBT
-        // contains both signed and unsigned inputs — the HW wallet signs its
-        // inputs and the combine step merges everything.
+        // Mixed WIF + HW wallet: do NOT pre-sign WIF inputs here.
+        // If we pre-sign, the Coldcard Q sees all inputs as signed,
+        // auto-finalizes the transaction, and its finalization puts
+        // scriptSig on segwit WIF inputs (P2PKH bug). Instead, leave
+        // WIF inputs unsigned so the Coldcard returns a PSBT (not a
+        // raw tx). WIF inputs are signed in the Combine & Finalize step.
         if (someUtxosHaveWif()) {
-          let wifSigned = 0;
-          for (let i = 0; i < utxoRows.length; i++) {
-            const wifVal = utxoRows[i].getAttribute('data-wif');
-            if (!wifVal) continue;
-            try {
-              const kp = ECPair.fromWIF(wifVal, net);
-              psbt.signInput(i, kp);
-              wifSigned++;
-            } catch (e) { /* skip non-matching */ }
-          }
-          console.log(`[PSBT] Partial signing: ${wifSigned} WIF inputs signed in-place`);
+          console.log('[PSBT] Mixed mode: WIF inputs left unsigned for HW wallet signing');
         }
         document.getElementById('psbtHex').textContent = Buffer.from(psbt.toBuffer()).toString('hex');
         document.getElementById('qrDisplay').style.display = 'none';
@@ -2054,6 +2045,23 @@
         const combined = psbtArray[0];
         for (let i = 1; i < psbtArray.length; i++) {
           combined.combine(psbtArray[i]);
+        }
+
+        // Sign any WIF inputs that were left unsigned for HW wallet flow
+        const utxoRows = document.querySelectorAll('#utxoContainer [data-utxo]');
+        const network = getSelectedNetwork();
+        let wifSigned = 0;
+        for (let i = 0; i < utxoRows.length; i++) {
+          const wifVal = utxoRows[i].getAttribute('data-wif');
+          if (!wifVal) continue;
+          try {
+            const kp = ECPair.fromWIF(wifVal, network);
+            combined.signInput(i, kp);
+            wifSigned++;
+          } catch (e) { /* skip non-matching or already signed */ }
+        }
+        if (wifSigned > 0) {
+          console.log(`[Combine] Signed ${wifSigned} WIF input(s) before finalizing`);
         }
 
         combined.finalizeAllInputs();

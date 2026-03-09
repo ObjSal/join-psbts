@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Scanner - Raw Data</title>
+<style>
+  body { font-family: monospace; background: #1a1a2e; color: #eee; margin: 20px; }
+  video { width: 350px; height: 350px; border: 2px solid #f7931a; border-radius: 8px; display: block; }
+  button { background: #f7931a; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 10px 5px 10px 0; }
+  button:hover { background: #e8820a; }
+  #output { background: #0d0d1a; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-top: 15px; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; user-select: all; }
+  .label { color: #f7931a; font-weight: bold; }
+  canvas { display: none; }
+  #status { margin: 10px 0; color: #aaa; }
+</style>
+</head>
+<body>
+<h2>QR Scanner - Raw Data Inspector</h2>
+<button id="startBtn">Start Camera</button>
+<button id="stopBtn" style="display:none">Stop</button>
+<button id="copyBtn" style="display:none">Copy to Clipboard</button>
+<video id="video" autoplay playsinline style="display:none"></video>
+<canvas id="canvas"></canvas>
+<div id="status"></div>
+<div id="output"></div>
+
+<script type="module">
+import jsQR from "https://esm.sh/jsqr@1.4.0";
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const output = document.getElementById('output');
+const status = document.getElementById('status');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const copyBtn = document.getElementById('copyBtn');
+
+let stream = null;
+let scanning = false;
+let lastData = '';
+
+startBtn.onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: 640, height: 480 }
+    });
+    video.srcObject = stream;
+    video.style.display = '';
+    startBtn.style.display = 'none';
+    stopBtn.style.display = '';
+    scanning = true;
+    status.textContent = 'Scanning...';
+    scan();
+  } catch (e) {
+    status.textContent = 'Camera error: ' + e.message;
+  }
+};
+
+stopBtn.onclick = () => {
+  scanning = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  video.style.display = 'none';
+  stopBtn.style.display = 'none';
+  startBtn.style.display = '';
+  status.textContent = 'Stopped';
+};
+
+copyBtn.onclick = () => {
+  navigator.clipboard.writeText(lastData);
+  copyBtn.textContent = 'Copied!';
+  setTimeout(() => copyBtn.textContent = 'Copy to Clipboard', 1500);
+};
+
+function scan() {
+  if (!scanning) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if (code) {
+      lastData = code.data;
+      const raw = code.binaryData ? new Uint8Array(code.binaryData) : null;
+
+      let info = '';
+      info += `<span class="label">String data length:</span> ${code.data.length} chars\n`;
+      info += `<span class="label">String data:</span>\n${code.data}\n\n`;
+
+      if (raw) {
+        info += `<span class="label">Binary data length:</span> ${raw.length} bytes\n`;
+        info += `<span class="label">First 10 bytes (hex):</span> ${Array.from(raw.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join('')}\n`;
+
+        // Check format
+        if (raw[0] === 0x70 && raw[1] === 0x73 && raw[2] === 0x62 && raw[3] === 0x74 && raw[4] === 0xff) {
+          info += `<span class="label">Format:</span> PSBT (binary magic bytes)\n`;
+        }
+
+        info += `<span class="label">Full binary hex:</span>\n${Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join('')}\n\n`;
+      }
+
+      // Detect format from string data
+      if (code.data.startsWith('B$')) {
+        info += `<span class="label">Detected:</span> BBQr frame\n`;
+        const type = code.data[2];
+        const encoding = code.data[3];
+        info += `<span class="label">BBQr type:</span> ${type} (P=PSBT, T=Transaction)\n`;
+        info += `<span class="label">BBQr encoding:</span> ${encoding}\n`;
+      } else if (/^[0-9a-fA-F]+$/.test(code.data) && code.data.length % 2 === 0) {
+        const hexBytes = [];
+        for (let i = 0; i < code.data.length; i += 2) {
+          hexBytes.push(parseInt(code.data.substring(i, i + 2), 16));
+        }
+        const first5 = hexBytes.slice(0, 5).map(b => b.toString(16).padStart(2, '0')).join('');
+        info += `<span class="label">Detected:</span> Hex string\n`;
+        info += `<span class="label">Hex first 5 bytes:</span> ${first5}\n`;
+        if (first5 === '7073627400' || first5 === '70736274ff') {
+          info += `<span class="label">Format:</span> PSBT (hex encoded)\n`;
+        }
+        const ver = code.data.substring(0, 8).toLowerCase();
+        if (ver === '01000000' || ver === '02000000') {
+          info += `<span class="label">Format:</span> Raw transaction hex (version ${ver})\n`;
+        }
+      } else {
+        // Try base64
+        try {
+          const decoded = atob(code.data);
+          info += `<span class="label">Detected:</span> Possibly base64 (decoded ${decoded.length} bytes)\n`;
+          const first5b64 = Array.from(decoded.slice(0, 5)).map((_, i) => decoded.charCodeAt(i).toString(16).padStart(2, '0')).join('');
+          if (first5b64 === '70736274ff') {
+            info += `<span class="label">Format:</span> PSBT (base64 encoded)\n`;
+          }
+        } catch (e) {
+          info += `<span class="label">Detected:</span> Unknown format\n`;
+        }
+      }
+
+      output.innerHTML = info;
+      copyBtn.style.display = '';
+      status.textContent = 'QR detected! Scan another or stop.';
+    }
+  }
+  requestAnimationFrame(scan);
+}
+</script>
+</body>
+</html>

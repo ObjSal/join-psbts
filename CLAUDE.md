@@ -78,7 +78,7 @@ The fetch input also accepts WIF private keys (Wallet Import Format). `isWif(inp
 
 **Inline signing**: When `allUtxosHaveWif()` returns true, the Create button becomes "Create, Sign & Finalize". Clicking it creates the PSBT, signs each input with its per-UTXO WIF via `ECPair.fromWIF()` + `psbt.signInput()` (try/catch per input), finalizes, extracts the raw transaction, and navigates directly to the Broadcast step.
 
-**Partial signing (single PSBT approach)**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create & Partially Sign PSBT". WIF inputs are signed directly on the main PSBT using `psbt.signInput()` (creating `partial_sigs`), while HW wallet inputs remain unsigned with `witnessUtxo` intact. The resulting single PSBT contains both signed and unsigned inputs — the HW wallet signs its remaining inputs, then the combine step merges everything. This approach avoids the Coldcard P2PKH finalization bug that occurred with the previous parallel signing approach (stripped witnessUtxo).
+**Deferred WIF signing (mixed mode)**: When `someUtxosHaveWif()` returns true (mixed mode — some UTXOs have WIFs, some don't), the Create button becomes "Create PSBT (sign WIF after HW)". WIF inputs are intentionally left unsigned at PSBT creation time. The unsigned PSBT is shown via QR/file for the HW wallet to sign its inputs. After the HW-signed PSBT is uploaded, the combine step signs WIF inputs in the browser via `ECPair.fromWIF()` + `psbt.signInput()`, then finalizes. This deferred approach avoids the Coldcard Q auto-finalize bug: if WIF inputs were pre-signed, the CC Q would see all inputs signed and auto-finalize via QR, incorrectly putting P2WPKH signatures in scriptSig (P2PKH-style) instead of witness.
 
 **Dispatch order** in `fetchUtxos()`: `isExtendedKey()` → `isWif()` → single address.
 
@@ -228,6 +228,9 @@ python3 tools/sign-psbt.py <psbt-file> <wif>
 ```
 
 ## Known Issues
+
+### Coldcard Q auto-finalizes via QR when all inputs are signed
+When the Coldcard Q receives a PSBT via QR code where all inputs have `partial_sigs` (i.e., all inputs are already signed or signable), it auto-finalizes and outputs a raw transaction hex instead of a PSBT. This differs from `ckcc sign` via USB, which returns a PSBT with `partial_sigs` (not finalized). The auto-finalization incorrectly puts P2WPKH witness signatures in `scriptSig` (P2PKH-style) instead of the witness field, causing "Witness requires empty scriptSig" on broadcast. **Workaround**: WIF inputs are left unsigned when creating the PSBT for QR display to the Coldcard. After the Coldcard signs its input and returns the PSBT, WIF inputs are signed in the browser during the combine step.
 
 ### `ckcc addr` blocks the Coldcard USB interface
 `ckcc addr -s -q <path>` returns the address to the CLI immediately, but the Coldcard's `show_address` protocol command displays the address on the device screen and waits for the user to dismiss it (press OK/X). While the address is displayed, the device is "busy" — any subsequent `ckcc` command (including `ckcc sign`) fails with "Coldcard is handling another request right now." There is no `--no-display` or `--silent` flag. The Coldcard tests use `ckcc pubkey` + local address derivation via embit instead to avoid blocking the device.

@@ -1540,8 +1540,8 @@ def run_tests(page, base_url):
     }""")
 
     create_btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
-    test("mixed mode: button says 'Create & Partially Sign PSBT'",
-         'Partially Sign' in create_btn_text, f"got '{create_btn_text}'")
+    test("mixed mode: button says 'Create PSBT (sign WIF after HW)'",
+         'sign WIF after HW' in create_btn_text, f"got '{create_btn_text}'")
 
     visible_steps = page.evaluate("""() => {
         return Array.from(document.querySelectorAll('.step-indicator .step'))

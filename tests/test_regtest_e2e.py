@@ -1320,8 +1320,8 @@ def run_tests(page, base_url, cli, server_url):
 
     # Verify button text
     btn_text = page.evaluate("() => document.getElementById('createPsbt').textContent")
-    test("mixed: button says 'Partially Sign'",
-         'Partially Sign' in btn_text, f"got '{btn_text}'")
+    test("mixed: button says 'sign WIF after HW'",
+         'sign WIF after HW' in btn_text, f"got '{btn_text}'")
 
     # Verify 4-step layout
     visible_steps = page.evaluate("""() => {
@@ -1357,7 +1357,7 @@ def run_tests(page, base_url, cli, server_url):
     section("34. Sign Remaining Inputs & Combine")
     # ========================================================
 
-    # Parse the partially signed PSBT and verify some inputs are signed
+    # Parse the PSBT — all inputs should be unsigned (WIF signing deferred to combine step)
     partial_info = page.evaluate(f"""() => {{
         const bitcoin = window._bitcoin;
         const net = window._fn.getSelectedNetwork();
@@ -1371,12 +1371,13 @@ def run_tests(page, base_url, cli, server_url):
         }}
         return {{ signed, unsigned, total: psbt.data.inputs.length }};
     }}""")
-    test("mixed: some inputs signed",
-         partial_info["signed"] > 0, f"got {partial_info}")
-    test("mixed: some inputs unsigned",
-         partial_info["unsigned"] > 0, f"got {partial_info}")
+    test("mixed: all inputs unsigned (WIF deferred)",
+         partial_info["signed"] == 0, f"got {partial_info}")
+    test("mixed: total inputs correct",
+         partial_info["total"] == partial_info["unsigned"], f"got {partial_info}")
 
-    # Sign the remaining inputs with WIF B in-browser
+    # Simulate HW wallet signing: sign only the non-WIF input (wallet B) externally
+    # This mimics what a Coldcard would do — sign its input, leave others unsigned
     psbt_b64 = page.evaluate("""() => {
         const bitcoin = window._bitcoin;
         const net = window._fn.getSelectedNetwork();
@@ -1398,15 +1399,15 @@ def run_tests(page, base_url, cli, server_url):
         return psbt.toBase64();
     }}""", {"psbtB64": psbt_b64, "wif": kp_b["wif"]})
 
-    test("mixed: B-signed PSBT obtained", signed_b64 is not None and len(signed_b64) > 0)
+    test("mixed: HW-signed PSBT obtained", signed_b64 is not None and len(signed_b64) > 0)
 
-    # Write signed PSBT to temp file for upload
+    # Write HW-signed PSBT to temp file for upload
     signed_bytes = base64.b64decode(signed_b64)
     with tempfile.NamedTemporaryFile(suffix=".psbt", delete=False) as f:
         f.write(signed_bytes)
         signed_path = f.name
 
-    # Navigate to Sign card and upload
+    # Navigate to Sign card and upload — combine step will sign WIF inputs automatically
     page.evaluate("() => window._fn.showCard('cardSign')")
     page.set_input_files("#psbtFiles", [signed_path])
     page.wait_for_function(
@@ -1414,7 +1415,7 @@ def run_tests(page, base_url, cli, server_url):
         timeout=5000)
 
     psbt_items = len(page.query_selector_all(".psbt-list-item"))
-    test("mixed: signed PSBT uploaded to accumulator", psbt_items >= 1,
+    test("mixed: HW-signed PSBT uploaded to accumulator", psbt_items >= 1,
          f"got {psbt_items}")
 
     # Combine & Finalize

@@ -565,16 +565,14 @@ def run_tests():
                                   f"partial_sigs={inp['has_partial_sigs']}({inp['num_partial_sigs']}), "
                                   f"finalWit={inp['has_final_scriptwitness']}")
 
-                        # The WIF input should be partially signed
-                        wif_inputs = [inp for inp in web_analysis if inp['has_partial_sigs']]
+                        # All inputs should be unsigned (WIF signing deferred to combine step)
                         unsigned_inputs = [inp for inp in web_analysis
                                            if not inp['has_partial_sigs']
                                            and not inp['has_final_scriptwitness']]
 
-                        test("web: has WIF-signed inputs", len(wif_inputs) > 0,
-                             f"found {len(wif_inputs)}")
-                        test("web: has unsigned CC inputs", len(unsigned_inputs) > 0,
-                             f"found {len(unsigned_inputs)}")
+                        test("web: all inputs unsigned (WIF deferred)",
+                             len(unsigned_inputs) == len(web_analysis),
+                             f"unsigned={len(unsigned_inputs)}, total={len(web_analysis)}")
 
                         # Check if the CC input can be signed by walletprocesspsbt
                         web_b64 = base64.b64encode(psbt_bytes).decode()
@@ -598,9 +596,11 @@ def run_tests():
                                     test(f"web: input {inp['index']} P2PKH check", False,
                                          "HAS final_scriptsig = P2PKH finalization bug!")
 
-                            # Try finalize and broadcast
+                            # Sign WIF input (deferred from create step) then finalize
                             try:
                                 final_web = PSBT.parse(web_signed_bytes)
+                                wif_sigs_web = final_web.sign_with(wif3_privkey)
+                                print(f"  WIF signed {wif_sigs_web} input(s) before finalize")
                                 final_web_tx = finalize_psbt(final_web)
                                 final_web_hex = final_web_tx.serialize().hex()
 

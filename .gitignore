@@ -79,6 +79,10 @@ web_modules/
 .env.production.local
 .env.local
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Wallet credentials (WIF keys)
 settings.json
 

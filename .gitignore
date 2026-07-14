@@ -137,3 +137,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Private companion — internal dev docs live in join-psbts-private (symlinked via its install.sh)
+CLAUDE.md
+.claude/
